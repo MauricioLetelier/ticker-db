@@ -1,0 +1,19 @@
+tickers:
+  - AAPL
+  - MSFT
+  - NVDA
+
+db:
+  host: "127.0.0.1"
+  port: 5432
+  name: "appdb"
+  user: "appuser"
+
+update:
+  daily_lookback_days: 14
+  intraday_enabled: true
+  intraday_period: "1d"
+  keep_1m_hours: 30
+
+bootstrap:
+  daily_period: "1y"
