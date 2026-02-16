@@ -745,6 +745,174 @@ def render_top_performer_block(title: str, lookback_days: int, tickers: Sequence
     st.plotly_chart(style_figure(fig), use_container_width=True)
 
 
+def fetch_close_panel(tickers: Sequence[str], start_dt, end_dt) -> pd.DataFrame:
+    sql = """
+    SELECT
+      p.dt,
+      p.ticker,
+      p.close::float AS close
+    FROM prices_1d p
+    WHERE p.ticker = ANY(%s)
+      AND p.dt >= %s
+      AND p.dt <= %s
+      AND p.close IS NOT NULL
+    ORDER BY p.dt, p.ticker;
+    """
+    df = qdf(sql, (list(tickers), start_dt, end_dt))
+    if df.empty:
+        return pd.DataFrame()
+    df["dt"] = pd.to_datetime(df["dt"])
+    panel = df.pivot(index="dt", columns="ticker", values="close").sort_index()
+    return panel
+
+
+def run_threshold_simulation(
+    price_panel: pd.DataFrame,
+    initial_capital_by_ticker: dict[str, float],
+    buy_threshold_pct: float,
+    buy_window_days: int,
+    sell_threshold_pct: float,
+    sell_window_days: int,
+    sell_mode: str,
+    fee_bps: float,
+    allow_reentry: bool,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    tickers = list(initial_capital_by_ticker.keys())
+    fee_buy = 1.0 + (fee_bps / 10000.0)
+    fee_sell = 1.0 - (fee_bps / 10000.0)
+
+    state = {
+        t: {
+            "cash": float(initial_capital_by_ticker[t]),
+            "shares": 0.0,
+            "last_price": None,
+            "buy_count": 0,
+            "sell_count": 0,
+            "history": [],
+        }
+        for t in tickers
+    }
+
+    trades: list[dict] = []
+    equity_curve: list[dict] = []
+
+    for dt, row in price_panel.iterrows():
+        for ticker in tickers:
+            px = row.get(ticker)
+            stt = state[ticker]
+
+            if pd.isna(px):
+                continue
+
+            price = float(px)
+            stt["last_price"] = price
+            stt["history"].append(price)
+            hist = stt["history"]
+
+            buy_ret = None
+            sell_ret = None
+            if len(hist) > buy_window_days:
+                buy_ret = ((hist[-1] / hist[-1 - buy_window_days]) - 1.0) * 100.0
+            if len(hist) > sell_window_days:
+                sell_ret = ((hist[-1] / hist[-1 - sell_window_days]) - 1.0) * 100.0
+
+            if stt["shares"] <= 0:
+                can_reenter = allow_reentry or stt["buy_count"] == 0
+                buy_signal = buy_ret is not None and buy_ret >= buy_threshold_pct
+                if can_reenter and buy_signal and stt["cash"] > 0:
+                    cash_before = stt["cash"]
+                    shares_bought = (cash_before / fee_buy) / price
+                    stt["shares"] = shares_bought
+                    stt["cash"] = 0.0
+                    stt["buy_count"] += 1
+                    trades.append(
+                        {
+                            "dt": dt,
+                            "ticker": ticker,
+                            "action": "BUY",
+                            "price": price,
+                            "shares": shares_bought,
+                            "cash_before": cash_before,
+                            "cash_after": stt["cash"],
+                            "signal_return_pct": buy_ret,
+                            "signal_window_days": buy_window_days,
+                        }
+                    )
+            else:
+                sell_signal = False
+                if sell_ret is not None:
+                    if sell_mode == "Sell on drop":
+                        sell_signal = sell_ret <= -abs(sell_threshold_pct)
+                    else:
+                        sell_signal = sell_ret >= abs(sell_threshold_pct)
+
+                if sell_signal:
+                    shares_before = stt["shares"]
+                    cash_before = stt["cash"]
+                    gross = shares_before * price
+                    net = gross * fee_sell
+                    stt["cash"] = cash_before + net
+                    stt["shares"] = 0.0
+                    stt["sell_count"] += 1
+                    trades.append(
+                        {
+                            "dt": dt,
+                            "ticker": ticker,
+                            "action": "SELL",
+                            "price": price,
+                            "shares": shares_before,
+                            "cash_before": cash_before,
+                            "cash_after": stt["cash"],
+                            "signal_return_pct": sell_ret,
+                            "signal_window_days": sell_window_days,
+                        }
+                    )
+
+        portfolio_value = 0.0
+        for ticker in tickers:
+            stt = state[ticker]
+            last_px = stt["last_price"] if stt["last_price"] is not None else 0.0
+            portfolio_value += stt["cash"] + (stt["shares"] * last_px)
+        equity_curve.append({"dt": dt, "portfolio_value": portfolio_value})
+
+    final_rows: list[dict] = []
+    for ticker in tickers:
+        stt = state[ticker]
+        last_px = stt["last_price"] if stt["last_price"] is not None else 0.0
+        position_value = stt["shares"] * last_px
+        total_value = stt["cash"] + position_value
+        initial_capital = float(initial_capital_by_ticker[ticker])
+        pnl = total_value - initial_capital
+        pnl_pct = (pnl / initial_capital) * 100.0 if initial_capital > 0 else None
+        final_rows.append(
+            {
+                "ticker": ticker,
+                "initial_capital": initial_capital,
+                "last_price": last_px,
+                "ending_cash": stt["cash"],
+                "ending_shares": stt["shares"],
+                "position_value": position_value,
+                "total_value": total_value,
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "buys": stt["buy_count"],
+                "sells": stt["sell_count"],
+            }
+        )
+
+    trades_df = pd.DataFrame(trades)
+    if not trades_df.empty:
+        trades_df["dt"] = pd.to_datetime(trades_df["dt"])
+        trades_df = trades_df.sort_values(["dt", "ticker", "action"]).reset_index(drop=True)
+
+    equity_df = pd.DataFrame(equity_curve)
+    if not equity_df.empty:
+        equity_df["dt"] = pd.to_datetime(equity_df["dt"])
+
+    final_df = pd.DataFrame(final_rows).sort_values("pnl_pct", ascending=False).reset_index(drop=True)
+    return trades_df, final_df, equity_df
+
+
 # -----------------------------
 # UI
 # -----------------------------
@@ -761,7 +929,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-page = st.sidebar.radio("Page", ["Explorer", "Top Performers"], index=0)
+page = st.sidebar.radio("Page", ["Explorer", "Top Performers", "Strategy Simulator"], index=0)
 
 if page == "Explorer":
     _, _, tickers = render_classification_filters("explorer")
@@ -873,7 +1041,7 @@ if page == "Explorer":
                 "Basket is computed as Σ(wᵢ·closeᵢ) per day, then normalized by its first value "
                 "in the selected period."
             )
-else:
+elif page == "Top Performers":
     _, _, universe_tickers = render_classification_filters("top")
     st.caption("Rankings use tickers from the selected sector/subsector universe.")
 
@@ -888,3 +1056,133 @@ else:
         render_top_performer_block("Top performers - last 7 days", 7, universe_tickers, top_n)
     with d2:
         render_top_performer_block("Top performers - last 30 days", 30, universe_tickers, top_n)
+else:
+    _, _, sim_universe = render_classification_filters("sim")
+    st.caption(
+        "Simulates rule-based buys/sells per ETF using daily closes. "
+        "Buy rule: price rises by threshold over buy window. "
+        "Sell rule: drop or gain threshold over sell window."
+    )
+
+    if not sim_universe:
+        st.info("No tickers available for this filter selection.")
+        st.stop()
+
+    default_sim_selection = sim_universe[: min(12, len(sim_universe))]
+    sim_tickers = st.multiselect(
+        "Tickers to simulate",
+        sim_universe,
+        default=default_sim_selection,
+        key="sim_tickers",
+    )
+    if not sim_tickers:
+        st.info("Pick at least one ticker to run the simulation.")
+        st.stop()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        sim_start = st.date_input("Simulation start", value=date(date.today().year - 1, 1, 1), key="sim_start")
+    with c2:
+        sim_end = st.date_input("Simulation end", value=date.today(), key="sim_end")
+
+    if sim_start >= sim_end:
+        st.error("Simulation start must be before end.")
+        st.stop()
+
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        buy_window = st.slider("Buy lookback (days)", min_value=2, max_value=60, value=5, step=1)
+        buy_threshold = st.number_input("Buy threshold %", min_value=0.1, max_value=50.0, value=2.0, step=0.1)
+    with r2:
+        sell_window = st.slider("Sell lookback (days)", min_value=2, max_value=60, value=5, step=1)
+        sell_threshold = st.number_input("Sell threshold %", min_value=0.1, max_value=50.0, value=2.0, step=0.1)
+    with r3:
+        sell_mode = st.selectbox("Sell trigger", ["Sell on drop", "Sell on gain"], index=0)
+        fee_bps = st.number_input("Trading fee (bps)", min_value=0.0, max_value=200.0, value=0.0, step=0.5)
+        allow_reentry = st.checkbox("Allow re-entry after selling", value=True)
+
+    default_initial = st.number_input(
+        "Default initial amount per ETF (USD)",
+        min_value=0.0,
+        max_value=1_000_000.0,
+        value=1000.0,
+        step=100.0,
+    )
+
+    if "sim_alloc_map" not in st.session_state:
+        st.session_state["sim_alloc_map"] = {}
+    alloc_map: dict[str, float] = st.session_state["sim_alloc_map"]
+    for t in sim_tickers:
+        if t not in alloc_map:
+            alloc_map[t] = float(default_initial)
+
+    alloc_df = pd.DataFrame(
+        {
+            "ticker": sim_tickers,
+            "initial_usd": [float(alloc_map[t]) for t in sim_tickers],
+        }
+    )
+    st.subheader("Initial capital allocation")
+    edited_alloc = st.data_editor(
+        alloc_df,
+        hide_index=True,
+        use_container_width=True,
+        disabled=["ticker"],
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker"),
+            "initial_usd": st.column_config.NumberColumn("Initial USD", min_value=0.0, step=100.0),
+        },
+        key="sim_alloc_editor",
+    )
+    for _, row in edited_alloc.iterrows():
+        alloc_map[str(row["ticker"])] = float(max(0.0, row["initial_usd"]))
+
+    initial_capital_by_ticker = {t: float(alloc_map.get(t, default_initial)) for t in sim_tickers}
+    if sum(initial_capital_by_ticker.values()) <= 0:
+        st.warning("Total initial capital must be greater than zero.")
+        st.stop()
+
+    price_panel = fetch_close_panel(sim_tickers, sim_start, sim_end)
+    if price_panel.empty:
+        st.warning("No daily price data found for this selection/date range.")
+        st.stop()
+
+    trades_df, final_df, equity_df = run_threshold_simulation(
+        price_panel=price_panel,
+        initial_capital_by_ticker=initial_capital_by_ticker,
+        buy_threshold_pct=float(buy_threshold),
+        buy_window_days=int(buy_window),
+        sell_threshold_pct=float(sell_threshold),
+        sell_window_days=int(sell_window),
+        sell_mode=sell_mode,
+        fee_bps=float(fee_bps),
+        allow_reentry=allow_reentry,
+    )
+
+    initial_total = float(final_df["initial_capital"].sum())
+    final_total = float(final_df["total_value"].sum())
+    pnl_total = final_total - initial_total
+    pnl_total_pct = (pnl_total / initial_total) * 100.0 if initial_total > 0 else 0.0
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.metric("Initial Capital", f"${initial_total:,.2f}")
+    with k2:
+        st.metric("Final Value", f"${final_total:,.2f}", f"{pnl_total_pct:.2f}%")
+    with k3:
+        st.metric("PnL", f"${pnl_total:,.2f}")
+    with k4:
+        st.metric("Trades", f"{0 if trades_df.empty else len(trades_df)}")
+
+    st.subheader("Final holdings")
+    st.dataframe(final_df, use_container_width=True)
+
+    if not equity_df.empty:
+        eq_fig = px.line(equity_df, x="dt", y="portfolio_value", title="Portfolio value over time")
+        st.plotly_chart(style_figure(eq_fig), use_container_width=True)
+
+    st.subheader("Trade log (all buys and sells)")
+    if trades_df.empty:
+        st.info("No trades were triggered with current thresholds.")
+    else:
+        st.dataframe(trades_df, use_container_width=True)
