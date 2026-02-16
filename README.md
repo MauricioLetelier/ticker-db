@@ -1,244 +1,185 @@
-📊 Ticker DB – Momentum Investing Backend
+# Ticker DB
 
-Lightweight financial data backend running on:
+Lightweight market-data backend:
 
-🐘 PostgreSQL (Docker)
+- Postgres in Docker
+- Python updater (`yfinance` + `psycopg`)
+- Streamlit dashboard
+- Optional Metabase
 
-🐍 Python updater (yfinance + psycopg)
+## Project Layout
 
-📈 Streamlit dashboard
-
-📊 Metabase (optional analytics layer)
-
-🧱 Architecture Overview
+```text
 /opt/ticker-db
-│
 ├── docker-compose.yml
-├── README.md
-│
+├── .env.example
 ├── sql/
-│   ├── 01_schema_prices.sql
 │   ├── 01_schema_classification.sql
-│   ├── 02_seed_sectors.sql
-│   └── 03_views.sql
-│
+│   ├── 03_views.sql
+│   └── seeds/
 ├── updater/
-│   ├── .venv/
 │   ├── bootstrap_history.py
 │   ├── daily_update.py
-│   ├── config.yaml
+│   ├── run_daily_update.sh
+│   ├── config.yaml.example
 │   └── requirements.txt
-│
 └── dashboard/
-    └── app.py
+    ├── app.py
+    └── requirements.txt
+```
 
-🗄 Database Tables
-1️⃣ prices_1d
+## Main Tables
 
-Daily OHLCV data.
+- `prices_1d`: daily OHLCV, primary key `(ticker, dt)`
+- `prices_1m`: 1-minute OHLCV, primary key `(ticker, ts)`
+- Classification tables: `sector`, `subsector`, `instrument`, `instrument_classification`
 
-ticker TEXT
-dt DATE
-open NUMERIC
-high NUMERIC
-low NUMERIC
-close NUMERIC
-adj_close NUMERIC
-volume BIGINT
+Notes on Yahoo intraday limits:
 
-PRIMARY KEY (ticker, dt)
+- `1m`: around 7 days
+- short intraday intervals: around 60 days depending on interval/provider behavior
 
-2️⃣ prices_1m
+## 1) Initial Setup
 
-1-minute intraday data.
+1. Configure Compose secrets:
 
-PRIMARY KEY (ticker, dt)
+```bash
+cd /opt/ticker-db
+cp .env.example .env
+# edit .env and set a strong POSTGRES_PASSWORD
+```
 
+2. Start services:
 
-⚠ Yahoo limitation:
+```bash
+docker compose up -d postgres dashboard metabase
+```
 
-~7 days of 1m
+3. Install updater dependencies:
 
-~60 days of 5m
+```bash
+cd /opt/ticker-db/updater
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp config.yaml.example config.yaml
+```
 
-3️⃣ Classification Tables
+4. Set updater DB password:
 
-sector
+```bash
+export DB_PASS='replace_with_same_postgres_password'
+```
 
-subsector
+## 2) Create Classification Schema (Optional but recommended for dashboard filters)
 
-instrument
+```bash
+cd /opt/ticker-db
+set -a
+source .env
+set +a
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/01_schema_classification.sql
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/02_seed_sectors_subsectors_instruments.sql
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/04_seed_config_tickers.sql
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/05_map_added_tickers.sql
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/03_views.sql
+```
 
-instrument_classification
+## 3) Backfill Data
 
-Used by dashboard filtering.
+Daily backfill:
 
-⚙️ Setup Instructions
-Activate Environment
+```bash
 cd /opt/ticker-db/updater
 source .venv/bin/activate
+export DB_PASS='replace_with_same_postgres_password'
+python bootstrap_history.py AAPL 1y 1d
+```
 
-Set DB Password (Required)
-export DB_PASS='StrongPassword123'
+Minute backfill:
 
-
-Your scripts require this environment variable.
-
-🚀 Data Population
-1️⃣ Bootstrap Single Ticker (Daily)
-python bootstrap_history.py AAPL 1y
-
-
-Pulls 1 year of daily data into prices_1d.
-
-2️⃣ Bootstrap Minute Data
+```bash
 python bootstrap_history.py AAPL 7d 1m
+```
 
+## 4) Incremental Updates
 
-Pulls 7 days of 1-minute data into prices_1m.
+Run once manually:
 
-3️⃣ Full Bootstrap From config.yaml (1 Year)
+```bash
 cd /opt/ticker-db/updater
 source .venv/bin/activate
-export DB_PASS='StrongPassword123'
-
-python -u run_full_bootstrap.py
-
-
-If using inline runner:
-
-python bootstrap_history.py XLC 1y
-
-
-Or batch loop using config.
-
-4️⃣ Daily Incremental Update
-
-Updates only missing recent data:
-
+export DB_PASS='replace_with_same_postgres_password'
 python daily_update.py
+```
 
+`daily_update.py` is idempotent (`ON CONFLICT ... DO UPDATE`) and now logs per ticker. Failed tickers are skipped so one bad symbol does not abort the entire run.
 
-Recommended to run via cron.
+## 5) Production Cron (Droplet)
 
-🔁 Reset Data
-Delete Daily Data
-docker exec -it postgres psql -U appuser -d appdb -c "TRUNCATE prices_1d;"
+Create updater env file:
 
-Delete Minute Data
-docker exec -it postgres psql -U appuser -d appdb -c "TRUNCATE prices_1m;"
+```bash
+cd /opt/ticker-db/updater
+cat > .env <<'EOF'
+DB_PASS='replace_with_same_postgres_password'
+EOF
+chmod 600 .env
+```
 
-🔍 Verify Data
+Create log directory:
 
-Enter database:
+```bash
+sudo mkdir -p /var/log/ticker-db
+sudo chown "$USER":"$USER" /var/log/ticker-db
+```
 
-docker exec -it postgres psql -U appuser -d appdb
+Edit crontab:
 
-
-Check tables:
-
-\dt
-
-
-Count rows:
-
-SELECT ticker, COUNT(*)
-FROM prices_1d
-GROUP BY ticker
-ORDER BY 2 DESC;
-
-
-Latest data:
-
-SELECT *
-FROM prices_1d
-ORDER BY dt DESC
-LIMIT 5;
-
-
-Exit:
-
-\q
-
-📈 Run Dashboard
-
-Container already exposes:
-
-http://<YOUR_DROPLET_IP>:8501
-
-
-Restart dashboard:
-
-docker restart dashboard
-
-
-Logs:
-
-docker logs -f dashboard
-
-🛡 Data Integrity
-
-Recommended constraints:
-
-PRIMARY KEY (ticker, dt)
-
-
-Ensures:
-
-No duplicate rows
-
-Safe re-runs
-
-Idempotent updates
-
-🧠 config.yaml Structure
-db:
-  host: 127.0.0.1
-  port: 5432
-  name: appdb
-  user: appuser
-
-tickers:
-  - SPY
-  - QQQ
-  - XLF
-  - SMH
-
-intervals:
-  - 1d
-  - 1m
-
-⏰ Production Cron Example
-
-Hourly incremental update:
-
+```bash
 crontab -e
+```
 
+Recommended entries:
 
-Add:
+```cron
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CRON_TZ=Etc/UTC
 
-0 * * * * cd /opt/ticker-db/updater && /opt/ticker-db/updater/.venv/bin/python daily_update.py >> updater.log 2>&1
+# Hourly, weekdays only; lock prevents overlapping runs
+7 * * * 1-5 /usr/bin/flock -n /tmp/ticker-db-update.lock /opt/ticker-db/updater/run_daily_update.sh >> /var/log/ticker-db/daily_update.log 2>&1
 
-🧹 Clean Rebuild Procedure
+# Nightly maintenance
+20 1 * * * source /opt/ticker-db/.env && /usr/bin/docker exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "ANALYZE prices_1d; ANALYZE prices_1m;" >> /var/log/ticker-db/maintenance.log 2>&1
+```
 
-1️⃣ Truncate tables
-2️⃣ Bootstrap 1 year
-3️⃣ Verify row counts
-4️⃣ Restart dashboard
+## Verification
 
-🔥 Common Errors
-KeyError: DB_PASS
+```bash
+cd /opt/ticker-db
+set -a
+source .env
+set +a
+docker exec -it postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+```
 
-Fix:
+```sql
+SELECT ticker, COUNT(*) FROM prices_1d GROUP BY ticker ORDER BY 2 DESC;
+SELECT ticker, MAX(dt) AS latest_dt FROM prices_1d GROUP BY ticker ORDER BY ticker;
+SELECT COUNT(*) FROM prices_1m;
+```
 
-export DB_PASS='StrongPassword123'
+## Dashboard
 
-relation "prices_1d" does not exist
+- URL: `http://<droplet_ip>:8501`
+- Logs: `docker logs -f dashboard`
 
-You didn’t run schema SQL.
+## Common Issues
 
-Duplicate data
-
-Add:
-
-PRIMARY KEY (ticker, dt)
+- `DB_PASS is required in the environment`:
+  - export `DB_PASS` or set `updater/.env` when using `run_daily_update.sh`.
+- `set POSTGRES_PASSWORD in .env` when running Compose:
+  - create `.env` from `.env.example`.
+- Empty intraday data:
+  - expected outside market hours, on market holidays, or beyond Yahoo retention windows.

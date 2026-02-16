@@ -17,3 +17,4 @@ update:
 
 bootstrap:
   daily_period: "1y"
+  intraday_period: "7d"

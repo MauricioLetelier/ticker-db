@@ -1,4 +1,6 @@
 import os
+import logging
+import sys
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -8,16 +10,23 @@ import yaml
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
+LOGGER = logging.getLogger("daily_update")
 
 
 def load_config() -> dict:
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(
+            f"Missing config file: {CONFIG_PATH}. Copy config.yaml.example to config.yaml."
+        )
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
 
 
 def get_conn(cfg: dict) -> psycopg.Connection:
     db = cfg["db"]
-    db_pass = os.environ["DB_PASS"]
+    db_pass = os.environ.get("DB_PASS")
+    if not db_pass:
+        raise RuntimeError("DB_PASS is required in the environment.")
     conn_str = (
         f"host={db['host']} port={db['port']} dbname={db['name']} "
         f"user={db['user']} password={db_pass}"
@@ -166,10 +175,21 @@ def cleanup_1m(conn: psycopg.Connection, keep_hours: int) -> None:
         cur.execute("DELETE FROM prices_1m WHERE ts < %s;", (cutoff,))
 
 
-def main() -> None:
+def configure_logging() -> None:
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+
+def main() -> int:
+    configure_logging()
     cfg = load_config()
-    tickers = [t.strip().upper() for t in cfg["tickers"] if t and str(t).strip()]
-    ucfg = cfg["update"]
+    tickers = [t.strip().upper() for t in cfg.get("tickers", []) if t and str(t).strip()]
+    ucfg = cfg.get("update", {})
+    if not tickers:
+        raise RuntimeError("No tickers configured in config.yaml.")
 
     lookback = int(ucfg.get("daily_lookback_days", 14))
     intraday_enabled = bool(ucfg.get("intraday_enabled", True))
@@ -177,25 +197,60 @@ def main() -> None:
     keep_1m = int(ucfg.get("keep_1m_hours", 30))
 
     start_dt = (datetime.now(timezone.utc) - timedelta(days=lookback)).date().isoformat()
+    success_count = 0
+    failed_tickers = []
 
     with get_conn(cfg) as conn:
         ensure_tables(conn)
 
         for t in tickers:
-            df1d = yf.download(t, start=start_dt, interval="1d", auto_adjust=False, progress=False)
-            df1d = normalize_ohlcv(df1d, t)
-            upsert_1d(conn, t, df1d)
+            try:
+                df1d = yf.download(t, start=start_dt, interval="1d", auto_adjust=False, progress=False)
+                df1d = normalize_ohlcv(df1d, t)
+                upsert_1d(conn, t, df1d)
 
-            if intraday_enabled:
-                df1m = yf.download(t, period=intraday_period, interval="1m", auto_adjust=False, progress=False)
-                df1m = normalize_ohlcv(df1m, t)
-                upsert_1m(conn, t, df1m)
+                intraday_rows = 0
+                if intraday_enabled:
+                    df1m = yf.download(t, period=intraday_period, interval="1m", auto_adjust=False, progress=False)
+                    df1m = normalize_ohlcv(df1m, t)
+                    intraday_rows = 0 if df1m is None else len(df1m)
+                    upsert_1m(conn, t, df1m)
+
+                conn.commit()
+                success_count += 1
+                LOGGER.info(
+                    "updated ticker=%s daily_rows=%s intraday_rows=%s",
+                    t,
+                    0 if df1d is None else len(df1d),
+                    intraday_rows,
+                )
+            except Exception:
+                conn.rollback()
+                failed_tickers.append(t)
+                LOGGER.exception("failed updating ticker=%s", t)
 
         if intraday_enabled:
-            cleanup_1m(conn, keep_1m)
+            try:
+                cleanup_1m(conn, keep_1m)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                LOGGER.exception("failed intraday cleanup")
+                return 1
 
-        conn.commit()
+    LOGGER.info(
+        "run complete total=%s success=%s failed=%s",
+        len(tickers),
+        success_count,
+        len(failed_tickers),
+    )
+    if failed_tickers:
+        LOGGER.warning("failed tickers: %s", ",".join(failed_tickers))
+
+    if success_count == 0:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

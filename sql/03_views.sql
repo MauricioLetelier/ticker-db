@@ -28,7 +28,7 @@ BEGIN
     EXECUTE $v$
       CREATE OR REPLACE VIEW v_prices_1d_classified AS
       SELECT
-        p.date,
+        p.dt,
         s.sector_name,
         ss.subsector_name,
         p.ticker,
