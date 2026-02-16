@@ -82,8 +82,13 @@ docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/01_sche
 docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/02_seed_sectors_subsectors_instruments.sql
 docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/04_seed_config_tickers.sql
 docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/05_map_added_tickers.sql
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/06_research_based_etf_mappings.sql
+docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/seeds/07_research_proxy_subsector_coverage.sql
 docker exec -i postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/03_views.sql
 ```
+
+`06_research_based_etf_mappings.sql` contains curated primary mappings for specific ETFs and intentionally avoids generic fallback assignments.
+`07_research_proxy_subsector_coverage.sql` adds non-primary proxy mappings so subsectors do not remain empty.
 
 ## 3) Backfill Data
 
