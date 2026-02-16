@@ -12,6 +12,7 @@ db:
 update:
   daily_lookback_days: 14
   intraday_enabled: true
+  intraday_truncate_before_load: true
   intraday_period: "1d"
   keep_1m_hours: 30
 

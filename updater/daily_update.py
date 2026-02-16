@@ -175,6 +175,11 @@ def cleanup_1m(conn: psycopg.Connection, keep_hours: int) -> None:
         cur.execute("DELETE FROM prices_1m WHERE ts < %s;", (cutoff,))
 
 
+def truncate_1m(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE prices_1m;")
+
+
 def configure_logging() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
@@ -195,6 +200,7 @@ def main() -> int:
     intraday_enabled = bool(ucfg.get("intraday_enabled", True))
     intraday_period = str(ucfg.get("intraday_period", "1d"))
     keep_1m = int(ucfg.get("keep_1m_hours", 30))
+    intraday_truncate_before_load = bool(ucfg.get("intraday_truncate_before_load", True))
 
     start_dt = (datetime.now(timezone.utc) - timedelta(days=lookback)).date().isoformat()
     success_count = 0
@@ -202,6 +208,16 @@ def main() -> int:
 
     with get_conn(cfg) as conn:
         ensure_tables(conn)
+
+        if intraday_enabled and intraday_truncate_before_load:
+            try:
+                truncate_1m(conn)
+                conn.commit()
+                LOGGER.info("truncated prices_1m before intraday load")
+            except Exception:
+                conn.rollback()
+                LOGGER.exception("failed truncating prices_1m before intraday load")
+                return 1
 
         for t in tickers:
             try:
@@ -229,7 +245,7 @@ def main() -> int:
                 failed_tickers.append(t)
                 LOGGER.exception("failed updating ticker=%s", t)
 
-        if intraday_enabled:
+        if intraday_enabled and not intraday_truncate_before_load:
             try:
                 cleanup_1m(conn, keep_1m)
                 conn.commit()
