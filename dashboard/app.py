@@ -353,73 +353,43 @@ def create_or_update_subsector_basket(
 
 
 # -----------------------------
-# UI
+# UI helpers
 # -----------------------------
-st.title("ETF Dashboard (Sector → Subsector → Ticker)")
-
-# ---- Load filter dimension values
-sectors = qdf("SELECT sector_name FROM sector ORDER BY sector_name;")["sector_name"].tolist()
-sector_choice = st.selectbox("Sector", ["All"] + sectors, index=0)
-
-if sector_choice == "All":
-    subsectors = qdf(
-        """
-        SELECT sc.subsector_name
-        FROM subsector sc
-        JOIN sector se ON se.sector_id = sc.sector_id
-        ORDER BY se.sector_name, sc.subsector_name;
-        """
-    )["subsector_name"].tolist()
-else:
-    subsectors = qdf(
-        """
-        SELECT sc.subsector_name
-        FROM subsector sc
-        JOIN sector se ON se.sector_id = sc.sector_id
-        WHERE se.sector_name = %s
-        ORDER BY sc.subsector_name;
-        """,
-        (sector_choice,),
-    )["subsector_name"].tolist()
-
-subsector_choice = st.selectbox("Subsector", ["All"] + subsectors, index=0)
-
-# ---- Resolve tickers based on filter
-if sector_choice == "All" and subsector_choice == "All":
-    tickers = qdf(
-        """
-        SELECT DISTINCT i.ticker
-        FROM instrument i
-        ORDER BY i.ticker;
-        """
-    )["ticker"].tolist()
-elif sector_choice != "All" and subsector_choice == "All":
-    tickers = qdf(
-        """
-        SELECT DISTINCT i.ticker
-        FROM instrument i
-        JOIN instrument_classification ic ON ic.ticker = i.ticker AND ic.is_primary
-        JOIN subsector sc ON sc.subsector_id = ic.subsector_id
-        JOIN sector se ON se.sector_id = sc.sector_id
-        WHERE se.sector_name = %s
-        ORDER BY i.ticker;
-        """,
-        (sector_choice,),
-    )["ticker"].tolist()
-elif sector_choice == "All" and subsector_choice != "All":
-    tickers = qdf(
-        """
-        SELECT DISTINCT i.ticker
-        FROM instrument i
-        JOIN instrument_classification ic ON ic.ticker = i.ticker AND ic.is_primary
-        JOIN subsector sc ON sc.subsector_id = ic.subsector_id
-        WHERE sc.subsector_name = %s
-        ORDER BY i.ticker;
-        """,
-        (subsector_choice,),
-    )["ticker"].tolist()
-else:
-    tickers = qdf(
+def resolve_tickers(sector_choice: str, subsector_choice: str) -> list[str]:
+    if sector_choice == "All" and subsector_choice == "All":
+        return qdf(
+            """
+            SELECT DISTINCT i.ticker
+            FROM instrument i
+            ORDER BY i.ticker;
+            """
+        )["ticker"].tolist()
+    if sector_choice != "All" and subsector_choice == "All":
+        return qdf(
+            """
+            SELECT DISTINCT i.ticker
+            FROM instrument i
+            JOIN instrument_classification ic ON ic.ticker = i.ticker AND ic.is_primary
+            JOIN subsector sc ON sc.subsector_id = ic.subsector_id
+            JOIN sector se ON se.sector_id = sc.sector_id
+            WHERE se.sector_name = %s
+            ORDER BY i.ticker;
+            """,
+            (sector_choice,),
+        )["ticker"].tolist()
+    if sector_choice == "All" and subsector_choice != "All":
+        return qdf(
+            """
+            SELECT DISTINCT i.ticker
+            FROM instrument i
+            JOIN instrument_classification ic ON ic.ticker = i.ticker AND ic.is_primary
+            JOIN subsector sc ON sc.subsector_id = ic.subsector_id
+            WHERE sc.subsector_name = %s
+            ORDER BY i.ticker;
+            """,
+            (subsector_choice,),
+        )["ticker"].tolist()
+    return qdf(
         """
         SELECT DISTINCT i.ticker
         FROM instrument i
@@ -432,134 +402,271 @@ else:
         (sector_choice, subsector_choice),
     )["ticker"].tolist()
 
-default_selection = tickers[: min(8, len(tickers))]
-selected_tickers = st.multiselect("Tickers", tickers, default=default_selection)
 
-c1, c2 = st.columns(2)
-with c1:
-    start = st.date_input("Start date", value=date(date.today().year - 1, 1, 1))
-with c2:
-    end = st.date_input("End date", value=date.today())
+def render_classification_filters(key_prefix: str) -> tuple[str, str, list[str]]:
+    sectors = qdf("SELECT sector_name FROM sector ORDER BY sector_name;")["sector_name"].tolist()
+    sector_choice = st.selectbox("Sector", ["All"] + sectors, index=0, key=f"{key_prefix}_sector")
 
-if start >= end:
-    st.error("Start date must be before end date.")
-    st.stop()
-
-if not selected_tickers:
-    st.info("Pick at least one ticker.")
-    st.stop()
-
-# ---- Pull normalized series in SQL (normalize at beginning of selected period)
-sql = """
-WITH base AS (
-  SELECT
-    p.ticker,
-    p.dt,
-    p.close,
-    FIRST_VALUE(p.close) OVER (PARTITION BY p.ticker ORDER BY p.dt) AS base_close
-  FROM prices_1d p
-  WHERE p.ticker = ANY(%s)
-    AND p.dt >= %s
-    AND p.dt <= %s
-),
-norm AS (
-  SELECT
-    ticker,
-    dt,
-    close,
-    CASE WHEN base_close IS NULL OR base_close = 0 THEN NULL ELSE close / base_close END AS norm_close
-  FROM base
-)
-SELECT ticker, dt, close, norm_close
-FROM norm
-ORDER BY dt, ticker;
-"""
-
-df = qdf(sql, (selected_tickers, start, end))
-if df.empty:
-    st.warning("No data found for that selection/date range (did you backfill these tickers?).")
-    st.stop()
-
-df["dt"] = pd.to_datetime(df["dt"])
-
-# ---- Chart: normalized tickers
-st.subheader("Normalized performance (starts at 1.0)")
-fig = px.line(df, x="dt", y="norm_close", color="ticker")
-st.plotly_chart(fig, use_container_width=True)
-
-# ---- Summary table
-st.subheader("Summary")
-last = (
-    df.sort_values(["ticker", "dt"])
-      .groupby("ticker", as_index=False)
-      .tail(1)
-      .loc[:, ["ticker", "dt", "close", "norm_close"]]
-      .rename(columns={"dt": "last_dt", "close": "last_close", "norm_close": "norm_close_last"})
-)
-
-last["period_return_%"] = (last["norm_close_last"] - 1.0) * 100.0
-last = last.sort_values("period_return_%", ascending=False)
-st.dataframe(last, use_container_width=True)
-
-# -----------------------------
-# Custom basket builder
-# -----------------------------
-st.divider()
-st.subheader("Add / Update custom Sector/Subsector + Build Basket")
-
-with st.form("custom_subsector_form"):
-    new_sector = st.text_input("Sector name", value="Custom")
-    new_subsector = st.text_input("Subsector name", value="My Basket")
-    new_tickers = st.text_area(
-        "Tickers (comma or newline separated)",
-        value="AAPL, MSFT, NVDA",
-        help="These tickers will be inserted into instrument (if missing) and linked to the subsector.",
-    )
-    weight_method = st.selectbox("Basket weighting", ["equal", "market_cap"], index=0)
-    make_primary = st.checkbox(
-        "Mark classification as primary?",
-        value=False,
-        help="If checked, sets instrument_classification.is_primary for (ticker, subsector).",
-    )
-    build_basket = st.form_submit_button("Save + Build Basket")
-
-if build_basket:
-    tickers_list = [t.strip().upper() for t in new_tickers.replace("\n", ",").split(",") if t.strip()]
-
-    if not tickers_list:
-        st.error("Please provide at least one ticker.")
-        st.stop()
-
-    try:
-        conn = get_conn()
-        subsector_id, basket_df, weights_df, warn = create_or_update_subsector_basket(
-            conn,
-            sector_name=new_sector.strip(),
-            subsector_name=new_subsector.strip(),
-            tickers=tickers_list,
-            weight_method=weight_method,  # "equal" | "market_cap"
-            start=start,
-            end=end,
-            is_primary=make_primary,
-        )
-    except Exception as e:
-        st.exception(e)
-        st.stop()
-
-    st.success(f"Saved. subsector_id = {subsector_id}")
-
-    if warn:
-        st.warning(warn)
-
-    st.write("Weights used:")
-    st.dataframe(weights_df.sort_values("w", ascending=False), use_container_width=True)
-
-    if basket_df.empty:
-        st.warning("No basket price data found (missing prices_1d backfill for these tickers?).")
+    if sector_choice == "All":
+        subsectors = qdf(
+            """
+            SELECT sc.subsector_name
+            FROM subsector sc
+            JOIN sector se ON se.sector_id = sc.sector_id
+            ORDER BY se.sector_name, sc.subsector_name;
+            """
+        )["subsector_name"].tolist()
     else:
-        st.subheader("Basket (weighted, then normalized to 1.0 at start)")
-        fig2 = px.line(basket_df, x="dt", y="basket_norm", title="Basket normalized performance")
-        st.plotly_chart(fig2, use_container_width=True)
+        subsectors = qdf(
+            """
+            SELECT sc.subsector_name
+            FROM subsector sc
+            JOIN sector se ON se.sector_id = sc.sector_id
+            WHERE se.sector_name = %s
+            ORDER BY sc.subsector_name;
+            """,
+            (sector_choice,),
+        )["subsector_name"].tolist()
 
-        st.caption("Basket is computed as Σ(wᵢ·closeᵢ) per day, then normalized by its first value in the selected period.")
+    subsector_choice = st.selectbox(
+        "Subsector",
+        ["All"] + subsectors,
+        index=0,
+        key=f"{key_prefix}_subsector",
+    )
+    tickers = resolve_tickers(sector_choice, subsector_choice)
+    return sector_choice, subsector_choice, tickers
 
+
+def fetch_normalized_series(tickers: Sequence[str], start_dt, end_dt) -> pd.DataFrame:
+    sql = """
+    WITH base AS (
+      SELECT
+        p.ticker,
+        p.dt,
+        p.close,
+        FIRST_VALUE(p.close) OVER (PARTITION BY p.ticker ORDER BY p.dt) AS base_close
+      FROM prices_1d p
+      WHERE p.ticker = ANY(%s)
+        AND p.dt >= %s
+        AND p.dt <= %s
+    ),
+    norm AS (
+      SELECT
+        ticker,
+        dt,
+        close,
+        CASE WHEN base_close IS NULL OR base_close = 0 THEN NULL ELSE close / base_close END AS norm_close
+      FROM base
+    )
+    SELECT ticker, dt, close, norm_close
+    FROM norm
+    ORDER BY dt, ticker;
+    """
+    out = qdf(sql, (list(tickers), start_dt, end_dt))
+    if not out.empty:
+        out["dt"] = pd.to_datetime(out["dt"])
+    return out
+
+
+def fetch_top_performers(tickers: Sequence[str], lookback_days: int, top_n: int) -> pd.DataFrame:
+    sql = """
+    WITH latest AS (
+      SELECT DISTINCT ON (p.ticker)
+        p.ticker,
+        p.dt AS latest_dt,
+        p.close::float AS latest_close
+      FROM prices_1d p
+      WHERE p.ticker = ANY(%s)
+        AND p.close IS NOT NULL
+      ORDER BY p.ticker, p.dt DESC
+    ),
+    base AS (
+      SELECT
+        l.ticker,
+        l.latest_dt,
+        l.latest_close,
+        p0.dt AS start_dt,
+        p0.close::float AS start_close
+      FROM latest l
+      LEFT JOIN LATERAL (
+        SELECT p.dt, p.close
+        FROM prices_1d p
+        WHERE p.ticker = l.ticker
+          AND p.close IS NOT NULL
+          AND p.dt <= (l.latest_dt - %s::int)
+        ORDER BY p.dt DESC
+        LIMIT 1
+      ) p0 ON TRUE
+    )
+    SELECT
+      ticker,
+      start_dt,
+      latest_dt,
+      start_close,
+      latest_close,
+      CASE
+        WHEN start_close IS NULL OR start_close = 0 THEN NULL
+        ELSE ((latest_close / start_close) - 1.0) * 100.0
+      END AS return_pct
+    FROM base
+    WHERE start_close IS NOT NULL
+    ORDER BY return_pct DESC NULLS LAST, ticker
+    LIMIT %s;
+    """
+    return qdf(sql, (list(tickers), lookback_days, top_n))
+
+
+def render_top_performer_block(title: str, lookback_days: int, tickers: Sequence[str], top_n: int) -> None:
+    rank_df = fetch_top_performers(tickers, lookback_days=lookback_days, top_n=top_n)
+    st.subheader(title)
+    if rank_df.empty:
+        st.warning(
+            f"No ranking data found for last {lookback_days} days "
+            "(missing backfill for some symbols)."
+        )
+        return
+
+    rank_df["start_dt"] = pd.to_datetime(rank_df["start_dt"])
+    rank_df["latest_dt"] = pd.to_datetime(rank_df["latest_dt"])
+    st.dataframe(rank_df, use_container_width=True)
+
+    chart_start = rank_df["start_dt"].min().date()
+    chart_end = rank_df["latest_dt"].max().date()
+    ranked_tickers = rank_df["ticker"].tolist()
+    perf_df = fetch_normalized_series(ranked_tickers, chart_start, chart_end)
+    if perf_df.empty:
+        st.warning("No price series found for ranked tickers.")
+        return
+    fig = px.line(
+        perf_df,
+        x="dt",
+        y="norm_close",
+        color="ticker",
+        title=f"Top {top_n} normalized performance ({lookback_days}d ranking window)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# -----------------------------
+# UI
+# -----------------------------
+st.title("ETF Dashboard (Sector → Subsector → Ticker)")
+page = st.sidebar.radio("Page", ["Explorer", "Top Performers"], index=0)
+
+if page == "Explorer":
+    _, _, tickers = render_classification_filters("explorer")
+    default_selection = tickers[: min(8, len(tickers))]
+    selected_tickers = st.multiselect("Tickers", tickers, default=default_selection)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        start = st.date_input("Start date", value=date(date.today().year - 1, 1, 1), key="explorer_start")
+    with c2:
+        end = st.date_input("End date", value=date.today(), key="explorer_end")
+
+    if start >= end:
+        st.error("Start date must be before end date.")
+        st.stop()
+
+    if not selected_tickers:
+        st.info("Pick at least one ticker.")
+        st.stop()
+
+    df = fetch_normalized_series(selected_tickers, start, end)
+    if df.empty:
+        st.warning("No data found for that selection/date range (did you backfill these tickers?).")
+        st.stop()
+
+    st.subheader("Normalized performance (starts at 1.0)")
+    fig = px.line(df, x="dt", y="norm_close", color="ticker")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Summary")
+    last = (
+        df.sort_values(["ticker", "dt"])
+        .groupby("ticker", as_index=False)
+        .tail(1)
+        .loc[:, ["ticker", "dt", "close", "norm_close"]]
+        .rename(columns={"dt": "last_dt", "close": "last_close", "norm_close": "norm_close_last"})
+    )
+
+    last["period_return_%"] = (last["norm_close_last"] - 1.0) * 100.0
+    last = last.sort_values("period_return_%", ascending=False)
+    st.dataframe(last, use_container_width=True)
+
+    st.divider()
+    st.subheader("Add / Update custom Sector/Subsector + Build Basket")
+
+    with st.form("custom_subsector_form"):
+        new_sector = st.text_input("Sector name", value="Custom")
+        new_subsector = st.text_input("Subsector name", value="My Basket")
+        new_tickers = st.text_area(
+            "Tickers (comma or newline separated)",
+            value="AAPL, MSFT, NVDA",
+            help="These tickers will be inserted into instrument (if missing) and linked to the subsector.",
+        )
+        weight_method = st.selectbox("Basket weighting", ["equal", "market_cap"], index=0)
+        make_primary = st.checkbox(
+            "Mark classification as primary?",
+            value=False,
+            help="If checked, sets instrument_classification.is_primary for (ticker, subsector).",
+        )
+        build_basket = st.form_submit_button("Save + Build Basket")
+
+    if build_basket:
+        tickers_list = [t.strip().upper() for t in new_tickers.replace("\n", ",").split(",") if t.strip()]
+
+        if not tickers_list:
+            st.error("Please provide at least one ticker.")
+            st.stop()
+
+        try:
+            conn = get_conn()
+            subsector_id, basket_df, weights_df, warn = create_or_update_subsector_basket(
+                conn,
+                sector_name=new_sector.strip(),
+                subsector_name=new_subsector.strip(),
+                tickers=tickers_list,
+                weight_method=weight_method,
+                start=start,
+                end=end,
+                is_primary=make_primary,
+            )
+        except Exception as e:
+            st.exception(e)
+            st.stop()
+
+        st.success(f"Saved. subsector_id = {subsector_id}")
+
+        if warn:
+            st.warning(warn)
+
+        st.write("Weights used:")
+        st.dataframe(weights_df.sort_values("w", ascending=False), use_container_width=True)
+
+        if basket_df.empty:
+            st.warning("No basket price data found (missing prices_1d backfill for these tickers?).")
+        else:
+            st.subheader("Basket (weighted, then normalized to 1.0 at start)")
+            fig2 = px.line(basket_df, x="dt", y="basket_norm", title="Basket normalized performance")
+            st.plotly_chart(fig2, use_container_width=True)
+
+            st.caption(
+                "Basket is computed as Σ(wᵢ·closeᵢ) per day, then normalized by its first value "
+                "in the selected period."
+            )
+else:
+    _, _, universe_tickers = render_classification_filters("top")
+    st.caption("Rankings use tickers from the selected sector/subsector universe.")
+
+    if not universe_tickers:
+        st.info("No tickers available for this filter selection.")
+        st.stop()
+
+    top_n = st.slider("Top N", min_value=3, max_value=20, value=5, step=1)
+    d1, d2 = st.columns(2)
+    with d1:
+        render_top_performer_block("Top performers - last 7 days", 7, universe_tickers, top_n)
+    with d2:
+        render_top_performer_block("Top performers - last 30 days", 30, universe_tickers, top_n)
