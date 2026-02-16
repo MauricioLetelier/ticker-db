@@ -789,12 +789,47 @@ def run_threshold_simulation(
             "buy_count": 0,
             "sell_count": 0,
             "history": [],
+            "capital_contributed": float(initial_capital_by_ticker[t]),
         }
         for t in tickers
     }
 
     trades: list[dict] = []
     equity_curve: list[dict] = []
+
+    def buy_one_unit(ticker: str, dt, price: float, signal_ret: float | None, signal_window: int):
+        stt = state[ticker]
+        unit_usd = float(initial_capital_by_ticker[ticker])
+        if unit_usd <= 0:
+            return
+
+        cash_before = stt["cash"]
+        cash_used = min(cash_before, unit_usd)
+        external_contribution = max(0.0, unit_usd - cash_used)
+        stt["cash"] = cash_before - cash_used
+        stt["capital_contributed"] += external_contribution
+
+        shares_bought = (unit_usd / fee_buy) / price
+        stt["shares"] += shares_bought
+        stt["buy_count"] += 1
+
+        trades.append(
+            {
+                "dt": dt,
+                "ticker": ticker,
+                "action": "BUY",
+                "price": price,
+                "shares": shares_bought,
+                "order_usd": unit_usd,
+                "cash_used": cash_used,
+                "external_contribution": external_contribution,
+                "cash_before": cash_before,
+                "cash_after": stt["cash"],
+                "shares_after": stt["shares"],
+                "signal_return_pct": signal_ret,
+                "signal_window_days": signal_window,
+            }
+        )
 
     for dt, row in price_panel.iterrows():
         for ticker in tickers:
@@ -819,25 +854,8 @@ def run_threshold_simulation(
             if stt["shares"] <= 0:
                 can_reenter = allow_reentry or stt["buy_count"] == 0
                 buy_signal = buy_ret is not None and buy_ret >= buy_threshold_pct
-                if can_reenter and buy_signal and stt["cash"] > 0:
-                    cash_before = stt["cash"]
-                    shares_bought = (cash_before / fee_buy) / price
-                    stt["shares"] = shares_bought
-                    stt["cash"] = 0.0
-                    stt["buy_count"] += 1
-                    trades.append(
-                        {
-                            "dt": dt,
-                            "ticker": ticker,
-                            "action": "BUY",
-                            "price": price,
-                            "shares": shares_bought,
-                            "cash_before": cash_before,
-                            "cash_after": stt["cash"],
-                            "signal_return_pct": buy_ret,
-                            "signal_window_days": buy_window_days,
-                        }
-                    )
+                if can_reenter and buy_signal:
+                    buy_one_unit(ticker, dt, price, buy_ret, buy_window_days)
             else:
                 sell_signal = False
                 if sell_ret is not None:
@@ -846,6 +864,7 @@ def run_threshold_simulation(
                     else:
                         sell_signal = sell_ret >= abs(sell_threshold_pct)
 
+                buy_signal = buy_ret is not None and buy_ret >= buy_threshold_pct
                 if sell_signal:
                     shares_before = stt["shares"]
                     cash_before = stt["cash"]
@@ -861,12 +880,17 @@ def run_threshold_simulation(
                             "action": "SELL",
                             "price": price,
                             "shares": shares_before,
+                            "proceeds_net": net,
                             "cash_before": cash_before,
                             "cash_after": stt["cash"],
+                            "shares_after": stt["shares"],
                             "signal_return_pct": sell_ret,
                             "signal_window_days": sell_window_days,
                         }
                     )
+                elif buy_signal:
+                    # Pyramiding behavior: keep adding one unit while trend remains valid.
+                    buy_one_unit(ticker, dt, price, buy_ret, buy_window_days)
 
         portfolio_value = 0.0
         for ticker in tickers:
@@ -881,13 +905,16 @@ def run_threshold_simulation(
         last_px = stt["last_price"] if stt["last_price"] is not None else 0.0
         position_value = stt["shares"] * last_px
         total_value = stt["cash"] + position_value
-        initial_capital = float(initial_capital_by_ticker[ticker])
-        pnl = total_value - initial_capital
-        pnl_pct = (pnl / initial_capital) * 100.0 if initial_capital > 0 else None
+        initial_unit_usd = float(initial_capital_by_ticker[ticker])
+        capital_contributed = float(stt["capital_contributed"])
+        pnl = total_value - capital_contributed
+        pnl_pct = (pnl / capital_contributed) * 100.0 if capital_contributed > 0 else None
         final_rows.append(
             {
                 "ticker": ticker,
-                "initial_capital": initial_capital,
+                "initial_unit_usd": initial_unit_usd,
+                "capital_contributed": capital_contributed,
+                "extra_contributed": capital_contributed - initial_unit_usd,
                 "last_price": last_px,
                 "ending_cash": stt["cash"],
                 "ending_shares": stt["shares"],
@@ -1061,7 +1088,8 @@ else:
     st.caption(
         "Simulates rule-based buys/sells per ETF using daily closes. "
         "Buy rule: price rises by threshold over buy window. "
-        "Sell rule: drop or gain threshold over sell window."
+        "Sell rule: drop or gain threshold over sell window. "
+        "When already invested, a new buy signal adds one more unit."
     )
 
     if not sim_universe:
@@ -1102,7 +1130,7 @@ else:
         allow_reentry = st.checkbox("Allow re-entry after selling", value=True)
 
     default_initial = st.number_input(
-        "Default initial amount per ETF (USD)",
+        "Default unit amount per ETF buy (USD)",
         min_value=0.0,
         max_value=1_000_000.0,
         value=1000.0,
@@ -1119,10 +1147,10 @@ else:
     alloc_df = pd.DataFrame(
         {
             "ticker": sim_tickers,
-            "initial_usd": [float(alloc_map[t]) for t in sim_tickers],
+            "buy_unit_usd": [float(alloc_map[t]) for t in sim_tickers],
         }
     )
-    st.subheader("Initial capital allocation")
+    st.subheader("Per-ticker buy unit")
     edited_alloc = st.data_editor(
         alloc_df,
         hide_index=True,
@@ -1130,12 +1158,12 @@ else:
         disabled=["ticker"],
         column_config={
             "ticker": st.column_config.TextColumn("Ticker"),
-            "initial_usd": st.column_config.NumberColumn("Initial USD", min_value=0.0, step=100.0),
+            "buy_unit_usd": st.column_config.NumberColumn("Buy Unit USD", min_value=0.0, step=100.0),
         },
         key="sim_alloc_editor",
     )
     for _, row in edited_alloc.iterrows():
-        alloc_map[str(row["ticker"])] = float(max(0.0, row["initial_usd"]))
+        alloc_map[str(row["ticker"])] = float(max(0.0, row["buy_unit_usd"]))
 
     initial_capital_by_ticker = {t: float(alloc_map.get(t, default_initial)) for t in sim_tickers}
     if sum(initial_capital_by_ticker.values()) <= 0:
@@ -1159,19 +1187,22 @@ else:
         allow_reentry=allow_reentry,
     )
 
-    initial_total = float(final_df["initial_capital"].sum())
+    base_units_total = float(final_df["initial_unit_usd"].sum())
+    contributed_total = float(final_df["capital_contributed"].sum())
     final_total = float(final_df["total_value"].sum())
-    pnl_total = final_total - initial_total
-    pnl_total_pct = (pnl_total / initial_total) * 100.0 if initial_total > 0 else 0.0
+    pnl_total = final_total - contributed_total
+    pnl_total_pct = (pnl_total / contributed_total) * 100.0 if contributed_total > 0 else 0.0
 
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3, k4, k5 = st.columns(5)
     with k1:
-        st.metric("Initial Capital", f"${initial_total:,.2f}")
+        st.metric("Base Unit Total", f"${base_units_total:,.2f}")
     with k2:
-        st.metric("Final Value", f"${final_total:,.2f}", f"{pnl_total_pct:.2f}%")
+        st.metric("Capital Contributed", f"${contributed_total:,.2f}")
     with k3:
-        st.metric("PnL", f"${pnl_total:,.2f}")
+        st.metric("Final Value", f"${final_total:,.2f}", f"{pnl_total_pct:.2f}%")
     with k4:
+        st.metric("PnL", f"${pnl_total:,.2f}")
+    with k5:
         st.metric("Trades", f"{0 if trades_df.empty else len(trades_df)}")
 
     st.subheader("Final holdings")
