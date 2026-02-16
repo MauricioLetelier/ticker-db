@@ -41,14 +41,14 @@ DB_PASS = os.getenv("DB_PASS", "")
 
 WeightMethod = Literal["equal", "market_cap"]
 CHART_COLORS = [
-    "#0E6BA8",
-    "#F18F01",
-    "#2A9D8F",
-    "#A4161A",
-    "#7C6A0A",
-    "#136F63",
-    "#495867",
-    "#8A5A44",
+    "#2563eb",
+    "#0f766e",
+    "#b45309",
+    "#dc2626",
+    "#0ea5a4",
+    "#475569",
+    "#16a34a",
+    "#1d4ed8",
 ]
 
 
@@ -56,111 +56,142 @@ def inject_custom_css() -> None:
     st.markdown(
         """
         <style>
-          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
 
           :root {
-            --bg-main: #f6f4ef;
-            --bg-gradient-a: #fff8e8;
-            --bg-gradient-b: #edf5ff;
-            --card-bg: rgba(255, 255, 255, 0.72);
-            --card-border: rgba(14, 107, 168, 0.20);
-            --text-main: #1f2933;
-            --text-muted: #5c6773;
-            --accent: #0e6ba8;
-            --accent-soft: rgba(14, 107, 168, 0.13);
-            --shadow: 0 14px 40px rgba(14, 107, 168, 0.08);
+            --bg-main: #f6f8fb;
+            --bg-gradient-a: #f8faff;
+            --bg-gradient-b: #f5f9f8;
+            --card-bg: rgba(255, 255, 255, 0.94);
+            --card-border: rgba(15, 23, 42, 0.09);
+            --text-main: #0f172a;
+            --text-muted: #475569;
+            --accent: #2563eb;
+            --accent-soft: rgba(37, 99, 235, 0.10);
+            --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.05);
           }
 
           .stApp {
             background:
-              radial-gradient(1100px 460px at 6% -8%, var(--bg-gradient-a), transparent 60%),
-              radial-gradient(1200px 520px at 104% -12%, var(--bg-gradient-b), transparent 64%),
+              radial-gradient(1100px 460px at 8% -15%, var(--bg-gradient-a), transparent 62%),
+              radial-gradient(900px 420px at 102% -8%, var(--bg-gradient-b), transparent 62%),
               var(--bg-main);
             color: var(--text-main);
-            font-family: "Space Grotesk", "Segoe UI", sans-serif;
+            font-family: "Manrope", "Segoe UI", sans-serif;
           }
 
           [data-testid="stSidebar"] {
-            background:
-              linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(246, 250, 255, 0.90) 100%);
-            border-right: 1px solid rgba(14, 107, 168, 0.14);
+            background: rgba(255, 255, 255, 0.94);
+            border-right: 1px solid var(--card-border);
           }
 
           h1, h2, h3 {
-            font-family: "Fraunces", Georgia, serif;
-            letter-spacing: 0.1px;
-            color: #1a2a36;
+            font-family: "Manrope", "Segoe UI", sans-serif;
+            letter-spacing: -0.02em;
+            color: #0f172a;
+            font-weight: 700;
           }
 
           .hero {
-            padding: 1.05rem 1.2rem;
+            padding: 1rem 1.1rem;
             border: 1px solid var(--card-border);
-            border-radius: 18px;
-            background:
-              linear-gradient(145deg, rgba(255,255,255,0.86), rgba(255,255,255,0.65));
-            box-shadow: var(--shadow);
-            margin: 0.2rem 0 1.15rem 0;
+            border-radius: 12px;
+            background: var(--card-bg);
+            box-shadow: var(--shadow-soft);
+            margin: 0.15rem 0 1rem 0;
+            position: relative;
+          }
+
+          .hero::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            border-radius: 12px 0 0 12px;
+            background: linear-gradient(180deg, #2563eb 0%, #0f766e 100%);
           }
 
           .hero-title {
-            margin: 0;
-            font-family: "Fraunces", Georgia, serif;
-            font-size: 1.6rem;
-            font-weight: 700;
-            color: #102a43;
+            margin: 0 0 0 0.35rem;
+            font-family: "Manrope", "Segoe UI", sans-serif;
+            font-size: 1.35rem;
+            letter-spacing: -0.02em;
+            font-weight: 800;
+            color: #0f172a;
           }
 
           .hero-subtitle {
-            margin: 0.3rem 0 0 0;
+            margin: 0.25rem 0 0 0.35rem;
             color: var(--text-muted);
-            font-size: 0.96rem;
+            font-size: 0.92rem;
           }
 
           [data-testid="stMetric"] {
             border: 1px solid var(--card-border);
-            border-radius: 14px;
-            padding: 0.55rem 0.7rem;
+            border-radius: 12px;
+            padding: 0.55rem 0.7rem 0.5rem 0.7rem;
             background: var(--card-bg);
-            box-shadow: 0 5px 18px rgba(31, 41, 51, 0.06);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+          }
+
+          [data-testid="stMetricLabel"] {
+            color: #64748b;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+          }
+
+          [data-testid="stMetricValue"] {
+            color: #0f172a;
+            font-family: "IBM Plex Mono", ui-monospace, monospace;
+            font-size: 1.35rem;
+            font-variant-numeric: tabular-nums;
           }
 
           [data-testid="stDataFrame"] {
-            border: 1px solid rgba(14, 107, 168, 0.16);
-            border-radius: 14px;
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
             overflow: hidden;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           }
 
           [data-testid="stForm"] {
             border: 1px solid var(--card-border);
-            border-radius: 14px;
+            border-radius: 12px;
             background: var(--card-bg);
             padding: 0.8rem 0.85rem 0.6rem 0.85rem;
+            box-shadow: var(--shadow-soft);
+          }
+
+          [data-baseweb="select"] > div,
+          .stTextInput > div > div > input,
+          .stDateInput > div > div input,
+          .stTextArea > div > div > textarea {
+            border-radius: 10px;
+            border-color: rgba(15, 23, 42, 0.14);
+            background: #ffffff;
+          }
+
+          .stTabs [role="tab"] {
+            border-radius: 8px;
           }
 
           .stButton > button,
           div[data-testid="stFormSubmitButton"] button {
-            background: linear-gradient(135deg, #0E6BA8 0%, #0f87c6 100%);
+            background: #2563eb;
             color: white;
-            border: none;
+            border: 1px solid #1d4ed8;
             border-radius: 10px;
             font-weight: 600;
             transition: transform .14s ease, box-shadow .14s ease;
-            box-shadow: 0 8px 18px rgba(14, 107, 168, .24);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 6px 14px rgba(37, 99, 235, 0.18);
           }
 
           .stButton > button:hover,
           div[data-testid="stFormSubmitButton"] button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 12px 20px rgba(14, 107, 168, .25);
-          }
-
-          section.main > div > div > div > div > div {
-            animation: fadeUp .34s ease both;
-          }
-
-          @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(5px); }
-            to { opacity: 1; transform: translateY(0); }
+            background: #1d4ed8;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
           }
         </style>
         """,
@@ -171,18 +202,18 @@ def inject_custom_css() -> None:
 def style_figure(fig, title: str | None = None):
     fig.update_layout(
         template="plotly_white",
-        font={"family": "Space Grotesk, Segoe UI, sans-serif", "size": 13, "color": "#1f2933"},
+        font={"family": "Manrope, Segoe UI, sans-serif", "size": 12, "color": "#0f172a"},
         colorway=CHART_COLORS,
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,255,255,0.35)",
+        plot_bgcolor="#ffffff",
         hovermode="x unified",
-        margin={"l": 20, "r": 16, "t": 64, "b": 26},
+        margin={"l": 22, "r": 14, "t": 62, "b": 24},
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
     )
     if title:
-        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 18}})
+        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 16}})
     fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(92, 103, 115, 0.15)", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)", zeroline=False)
     return fig
 
 
@@ -722,9 +753,9 @@ st.title("ETF Dashboard (Sector → Subsector → Ticker)")
 st.markdown(
     """
     <div class="hero">
-      <p class="hero-title">Market Rotation Command Center</p>
+      <p class="hero-title">Market Dashboard</p>
       <p class="hero-subtitle">
-        Explore sector structure, build custom baskets, and monitor short-horizon winners with cleaner signal-first visuals.
+        Explore sector structure, build custom baskets, and monitor short-horizon winners with a cleaner signal-first layout.
       </p>
     </div>
     """,
