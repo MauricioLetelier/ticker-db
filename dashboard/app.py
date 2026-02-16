@@ -40,6 +40,150 @@ DB_USER = os.getenv("DB_USER", "appuser")
 DB_PASS = os.getenv("DB_PASS", "")
 
 WeightMethod = Literal["equal", "market_cap"]
+CHART_COLORS = [
+    "#0E6BA8",
+    "#F18F01",
+    "#2A9D8F",
+    "#A4161A",
+    "#7C6A0A",
+    "#136F63",
+    "#495867",
+    "#8A5A44",
+]
+
+
+def inject_custom_css() -> None:
+    st.markdown(
+        """
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+
+          :root {
+            --bg-main: #f6f4ef;
+            --bg-gradient-a: #fff8e8;
+            --bg-gradient-b: #edf5ff;
+            --card-bg: rgba(255, 255, 255, 0.72);
+            --card-border: rgba(14, 107, 168, 0.20);
+            --text-main: #1f2933;
+            --text-muted: #5c6773;
+            --accent: #0e6ba8;
+            --accent-soft: rgba(14, 107, 168, 0.13);
+            --shadow: 0 14px 40px rgba(14, 107, 168, 0.08);
+          }
+
+          .stApp {
+            background:
+              radial-gradient(1100px 460px at 6% -8%, var(--bg-gradient-a), transparent 60%),
+              radial-gradient(1200px 520px at 104% -12%, var(--bg-gradient-b), transparent 64%),
+              var(--bg-main);
+            color: var(--text-main);
+            font-family: "Space Grotesk", "Segoe UI", sans-serif;
+          }
+
+          [data-testid="stSidebar"] {
+            background:
+              linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(246, 250, 255, 0.90) 100%);
+            border-right: 1px solid rgba(14, 107, 168, 0.14);
+          }
+
+          h1, h2, h3 {
+            font-family: "Fraunces", Georgia, serif;
+            letter-spacing: 0.1px;
+            color: #1a2a36;
+          }
+
+          .hero {
+            padding: 1.05rem 1.2rem;
+            border: 1px solid var(--card-border);
+            border-radius: 18px;
+            background:
+              linear-gradient(145deg, rgba(255,255,255,0.86), rgba(255,255,255,0.65));
+            box-shadow: var(--shadow);
+            margin: 0.2rem 0 1.15rem 0;
+          }
+
+          .hero-title {
+            margin: 0;
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #102a43;
+          }
+
+          .hero-subtitle {
+            margin: 0.3rem 0 0 0;
+            color: var(--text-muted);
+            font-size: 0.96rem;
+          }
+
+          [data-testid="stMetric"] {
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 0.55rem 0.7rem;
+            background: var(--card-bg);
+            box-shadow: 0 5px 18px rgba(31, 41, 51, 0.06);
+          }
+
+          [data-testid="stDataFrame"] {
+            border: 1px solid rgba(14, 107, 168, 0.16);
+            border-radius: 14px;
+            overflow: hidden;
+          }
+
+          [data-testid="stForm"] {
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            background: var(--card-bg);
+            padding: 0.8rem 0.85rem 0.6rem 0.85rem;
+          }
+
+          .stButton > button,
+          div[data-testid="stFormSubmitButton"] button {
+            background: linear-gradient(135deg, #0E6BA8 0%, #0f87c6 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: transform .14s ease, box-shadow .14s ease;
+            box-shadow: 0 8px 18px rgba(14, 107, 168, .24);
+          }
+
+          .stButton > button:hover,
+          div[data-testid="stFormSubmitButton"] button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 20px rgba(14, 107, 168, .25);
+          }
+
+          section.main > div > div > div > div > div {
+            animation: fadeUp .34s ease both;
+          }
+
+          @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def style_figure(fig, title: str | None = None):
+    fig.update_layout(
+        template="plotly_white",
+        font={"family": "Space Grotesk, Segoe UI, sans-serif", "size": 13, "color": "#1f2933"},
+        colorway=CHART_COLORS,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(255,255,255,0.35)",
+        hovermode="x unified",
+        margin={"l": 20, "r": 16, "t": 64, "b": 26},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+    )
+    if title:
+        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 18}})
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(92, 103, 115, 0.15)", zeroline=False)
+    return fig
 
 
 # -----------------------------
@@ -529,7 +673,29 @@ def render_top_performer_block(title: str, lookback_days: int, tickers: Sequence
 
     rank_df["start_dt"] = pd.to_datetime(rank_df["start_dt"])
     rank_df["latest_dt"] = pd.to_datetime(rank_df["latest_dt"])
+    leader = rank_df.iloc[0]
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Leader", leader["ticker"], f"{leader['return_pct']:.2f}%")
+    with m2:
+        st.metric("Avg Return", f"{rank_df['return_pct'].mean():.2f}%")
+    with m3:
+        st.metric("Constituents", f"{len(rank_df)}")
     st.dataframe(rank_df, use_container_width=True)
+
+    bar_df = rank_df.sort_values("return_pct", ascending=True).copy()
+    bar_fig = px.bar(
+        bar_df,
+        x="return_pct",
+        y="ticker",
+        orientation="h",
+        title=f"Ranked returns ({lookback_days}d)",
+        labels={"return_pct": "Return %", "ticker": ""},
+        color="return_pct",
+        color_continuous_scale=["#86c5da", "#1b6ca8", "#f18f01"],
+    )
+    bar_fig.update_layout(coloraxis_showscale=False)
+    st.plotly_chart(style_figure(bar_fig), use_container_width=True)
 
     chart_start = rank_df["start_dt"].min().date()
     chart_end = rank_df["latest_dt"].max().date()
@@ -545,13 +711,25 @@ def render_top_performer_block(title: str, lookback_days: int, tickers: Sequence
         color="ticker",
         title=f"Top {top_n} normalized performance ({lookback_days}d ranking window)",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(style_figure(fig), use_container_width=True)
 
 
 # -----------------------------
 # UI
 # -----------------------------
+inject_custom_css()
 st.title("ETF Dashboard (Sector → Subsector → Ticker)")
+st.markdown(
+    """
+    <div class="hero">
+      <p class="hero-title">Market Rotation Command Center</p>
+      <p class="hero-subtitle">
+        Explore sector structure, build custom baskets, and monitor short-horizon winners with cleaner signal-first visuals.
+      </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 page = st.sidebar.radio("Page", ["Explorer", "Top Performers"], index=0)
 
 if page == "Explorer":
@@ -578,9 +756,17 @@ if page == "Explorer":
         st.warning("No data found for that selection/date range (did you backfill these tickers?).")
         st.stop()
 
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Universe Size", f"{len(tickers)}")
+    with m2:
+        st.metric("Selected", f"{len(selected_tickers)}")
+    with m3:
+        st.metric("Window (days)", f"{(end - start).days}")
+
     st.subheader("Normalized performance (starts at 1.0)")
     fig = px.line(df, x="dt", y="norm_close", color="ticker")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(style_figure(fig), use_container_width=True)
 
     st.subheader("Summary")
     last = (
@@ -650,7 +836,7 @@ if page == "Explorer":
         else:
             st.subheader("Basket (weighted, then normalized to 1.0 at start)")
             fig2 = px.line(basket_df, x="dt", y="basket_norm", title="Basket normalized performance")
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(style_figure(fig2), use_container_width=True)
 
             st.caption(
                 "Basket is computed as Σ(wᵢ·closeᵢ) per day, then normalized by its first value "
@@ -665,6 +851,7 @@ else:
         st.stop()
 
     top_n = st.slider("Top N", min_value=3, max_value=20, value=5, step=1)
+    st.metric("Ranking Universe", f"{len(universe_tickers)} tickers")
     d1, d2 = st.columns(2)
     with d1:
         render_top_performer_block("Top performers - last 7 days", 7, universe_tickers, top_n)
