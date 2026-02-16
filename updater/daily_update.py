@@ -1,18 +1,21 @@
 import os
 from datetime import datetime, timedelta, timezone
+
 import pandas as pd
-import yfinance as yf
 import psycopg
+import yfinance as yf
 import yaml
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
 
-def load_config():
+
+def load_config() -> dict:
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
 
-def get_conn(cfg):
+
+def get_conn(cfg: dict) -> psycopg.Connection:
     db = cfg["db"]
     db_pass = os.environ["DB_PASS"]
     conn_str = (
@@ -21,7 +24,8 @@ def get_conn(cfg):
     )
     return psycopg.connect(conn_str)
 
-def ensure_tables(conn):
+
+def ensure_tables(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
         cur.execute("""
         CREATE TABLE IF NOT EXISTS prices_1d (
@@ -50,22 +54,58 @@ def ensure_tables(conn):
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS prices_1m_ts_idx ON prices_1m (ts);")
 
-def upsert_1d(conn, ticker: str, df: pd.DataFrame):
-    if df.empty:
+
+def normalize_ohlcv(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """
+    yfinance sometimes returns MultiIndex columns like (Field, Ticker) even for one ticker.
+    This converts it into single-level columns: Open/High/Low/Close/Adj Close/Volume.
+    """
+    if df is None or df.empty:
+        return df
+
+    if isinstance(df.columns, pd.MultiIndex):
+        # Most common: (Field, Ticker) with ticker on last level
+        if ticker in df.columns.get_level_values(-1):
+            df = df.xs(ticker, axis=1, level=-1)
+        elif ticker in df.columns.get_level_values(0):
+            df = df.xs(ticker, axis=1, level=0)
+        else:
+            # fallback: use first ticker slice
+            any_t = df.columns.get_level_values(-1)[0]
+            df = df.xs(any_t, axis=1, level=-1)
+
+    # Ensure expected columns exist (Adj Close may be absent)
+    for col in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+        if col not in df.columns:
+            df[col] = pd.NA
+    return df
+
+
+def _to_float(x):
+    return float(x) if pd.notna(x) else None
+
+
+def _to_int(x):
+    return int(x) if pd.notna(x) else None
+
+
+def upsert_1d(conn: psycopg.Connection, ticker: str, df: pd.DataFrame) -> None:
+    if df is None or df.empty:
         return
+
     df = df.copy()
-    df.index = pd.to_datetime(df.index).date
+    df.index = pd.to_datetime(df.index).date  # date index
 
     rows = []
     for dt, r in df.iterrows():
         rows.append((
             ticker, dt,
-            float(r.get("Open")) if pd.notna(r.get("Open")) else None,
-            float(r.get("High")) if pd.notna(r.get("High")) else None,
-            float(r.get("Low")) if pd.notna(r.get("Low")) else None,
-            float(r.get("Close")) if pd.notna(r.get("Close")) else None,
-            float(r.get("Adj Close")) if pd.notna(r.get("Adj Close")) else None,
-            int(r.get("Volume")) if pd.notna(r.get("Volume")) else None,
+            _to_float(r["Open"]),
+            _to_float(r["High"]),
+            _to_float(r["Low"]),
+            _to_float(r["Close"]),
+            _to_float(r["Adj Close"]),
+            _to_int(r["Volume"]),
         ))
 
     with conn.cursor() as cur:
@@ -81,11 +121,15 @@ def upsert_1d(conn, ticker: str, df: pd.DataFrame):
               volume=EXCLUDED.volume;
         """, rows)
 
-def upsert_1m(conn, ticker: str, df: pd.DataFrame):
-    if df.empty:
+
+def upsert_1m(conn: psycopg.Connection, ticker: str, df: pd.DataFrame) -> None:
+    if df is None or df.empty:
         return
+
     df = df.copy()
     idx = pd.to_datetime(df.index)
+
+    # Normalize to UTC timestamptz
     if idx.tz is None:
         idx = idx.tz_localize("UTC")
     else:
@@ -96,11 +140,11 @@ def upsert_1m(conn, ticker: str, df: pd.DataFrame):
     for ts, r in df.iterrows():
         rows.append((
             ticker, ts.to_pydatetime(),
-            float(r.get("Open")) if pd.notna(r.get("Open")) else None,
-            float(r.get("High")) if pd.notna(r.get("High")) else None,
-            float(r.get("Low")) if pd.notna(r.get("Low")) else None,
-            float(r.get("Close")) if pd.notna(r.get("Close")) else None,
-            int(r.get("Volume")) if pd.notna(r.get("Volume")) else None,
+            _to_float(r["Open"]),
+            _to_float(r["High"]),
+            _to_float(r["Low"]),
+            _to_float(r["Close"]),
+            _to_int(r["Volume"]),
         ))
 
     with conn.cursor() as cur:
@@ -115,17 +159,19 @@ def upsert_1m(conn, ticker: str, df: pd.DataFrame):
               volume=EXCLUDED.volume;
         """, rows)
 
-def cleanup_1m(conn, keep_hours: int):
+
+def cleanup_1m(conn: psycopg.Connection, keep_hours: int) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=keep_hours)
     with conn.cursor() as cur:
         cur.execute("DELETE FROM prices_1m WHERE ts < %s;", (cutoff,))
 
-def main():
+
+def main() -> None:
     cfg = load_config()
-    tickers = [t.strip().upper() for t in cfg["tickers"] if t.strip()]
+    tickers = [t.strip().upper() for t in cfg["tickers"] if t and str(t).strip()]
     ucfg = cfg["update"]
 
-    lookback = int(ucfg["daily_lookback_days"])
+    lookback = int(ucfg.get("daily_lookback_days", 14))
     intraday_enabled = bool(ucfg.get("intraday_enabled", True))
     intraday_period = str(ucfg.get("intraday_period", "1d"))
     keep_1m = int(ucfg.get("keep_1m_hours", 30))
@@ -137,16 +183,19 @@ def main():
 
         for t in tickers:
             df1d = yf.download(t, start=start_dt, interval="1d", auto_adjust=False, progress=False)
+            df1d = normalize_ohlcv(df1d, t)
             upsert_1d(conn, t, df1d)
 
             if intraday_enabled:
                 df1m = yf.download(t, period=intraday_period, interval="1m", auto_adjust=False, progress=False)
+                df1m = normalize_ohlcv(df1m, t)
                 upsert_1m(conn, t, df1m)
 
         if intraday_enabled:
             cleanup_1m(conn, keep_1m)
 
         conn.commit()
+
 
 if __name__ == "__main__":
     main()

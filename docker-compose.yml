@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: StrongPassword123
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: appdb
+      MB_DB_PORT: 5432
+      MB_DB_USER: appuser
+      MB_DB_PASS: StrongPassword123
+      MB_DB_HOST: postgres
+    ports:
+      - "3000:3000"
+
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASS: StrongPassword123
+    ports:
+      - "8501:8501"
+
+volumes:
+  pgdata:

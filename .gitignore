@@ -1,0 +1,15 @@
+
+# secrets
+.env
+**/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# logs / data
+*.log
+data/
+output/
