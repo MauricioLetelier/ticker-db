@@ -1281,47 +1281,66 @@ else:
         )
     allow_leverage = st.checkbox("Allow leverage (cash can go negative)", value=True)
 
-    default_initial = st.number_input(
-        "Default unit amount per ETF buy (USD)",
-        min_value=0.0,
-        max_value=1_000_000.0,
-        value=1000.0,
-        step=100.0,
+    deployment_mode = st.radio(
+        "Deployment sizing",
+        ["Single amount for all tickers", "Per-ticker amounts"],
+        horizontal=True,
+        key="sim_deployment_mode",
     )
-    st.caption("This default auto-fills new tickers. Use the button below to overwrite all selected tickers.")
 
-    if "sim_alloc_map" not in st.session_state:
-        st.session_state["sim_alloc_map"] = {}
-    alloc_map: dict[str, float] = st.session_state["sim_alloc_map"]
-    for t in sim_tickers:
-        if t not in alloc_map:
-            alloc_map[t] = float(default_initial)
-    if st.button("Apply default to all selected tickers", key="sim_apply_default_units"):
+    if deployment_mode == "Single amount for all tickers":
+        deployment_per_trade = st.number_input(
+            "Deployment per trade (USD)",
+            min_value=0.0,
+            max_value=1_000_000.0,
+            value=1000.0,
+            step=100.0,
+        )
+        buy_unit_by_ticker = {t: float(deployment_per_trade) for t in sim_tickers}
+        st.caption("Each buy signal deploys this amount for the triggered ticker.")
+    else:
+        default_initial = st.number_input(
+            "Default unit amount per ETF buy (USD)",
+            min_value=0.0,
+            max_value=1_000_000.0,
+            value=1000.0,
+            step=100.0,
+        )
+        st.caption("This default auto-fills new tickers. Use the button below to overwrite all selected tickers.")
+
+        if "sim_alloc_map" not in st.session_state:
+            st.session_state["sim_alloc_map"] = {}
+        alloc_map: dict[str, float] = st.session_state["sim_alloc_map"]
         for t in sim_tickers:
-            alloc_map[t] = float(default_initial)
+            if t not in alloc_map:
+                alloc_map[t] = float(default_initial)
+        if st.button("Apply default to all selected tickers", key="sim_apply_default_units"):
+            for t in sim_tickers:
+                alloc_map[t] = float(default_initial)
 
-    alloc_df = pd.DataFrame(
-        {
-            "ticker": sim_tickers,
-            "buy_unit_usd": [float(alloc_map[t]) for t in sim_tickers],
-        }
-    )
-    st.subheader("Per-ticker buy unit")
-    edited_alloc = st.data_editor(
-        alloc_df,
-        hide_index=True,
-        use_container_width=True,
-        disabled=["ticker"],
-        column_config={
-            "ticker": st.column_config.TextColumn("Ticker"),
-            "buy_unit_usd": st.column_config.NumberColumn("Buy Unit USD", min_value=0.0, step=100.0),
-        },
-        key="sim_alloc_editor",
-    )
-    for _, row in edited_alloc.iterrows():
-        alloc_map[str(row["ticker"])] = float(max(0.0, row["buy_unit_usd"]))
+        alloc_df = pd.DataFrame(
+            {
+                "ticker": sim_tickers,
+                "buy_unit_usd": [float(alloc_map[t]) for t in sim_tickers],
+            }
+        )
+        st.subheader("Per-ticker buy unit")
+        edited_alloc = st.data_editor(
+            alloc_df,
+            hide_index=True,
+            use_container_width=True,
+            disabled=["ticker"],
+            column_config={
+                "ticker": st.column_config.TextColumn("Ticker"),
+                "buy_unit_usd": st.column_config.NumberColumn("Buy Unit USD", min_value=0.0, step=100.0),
+            },
+            key="sim_alloc_editor",
+        )
+        for _, row in edited_alloc.iterrows():
+            alloc_map[str(row["ticker"])] = float(max(0.0, row["buy_unit_usd"]))
 
-    buy_unit_by_ticker = {t: float(alloc_map.get(t, default_initial)) for t in sim_tickers}
+        buy_unit_by_ticker = {t: float(alloc_map.get(t, default_initial)) for t in sim_tickers}
+
     if sum(buy_unit_by_ticker.values()) <= 0:
         st.warning("Total buy-unit configuration must be greater than zero.")
         st.stop()
