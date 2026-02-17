@@ -22,7 +22,7 @@
 import os
 from datetime import date
 from itertools import product
-from typing import Sequence, Literal, Tuple
+from typing import Sequence, Literal, Tuple, Callable
 
 import pandas as pd
 import psycopg
@@ -970,12 +970,20 @@ def run_grid_search(
     sell_mode: str,
     fee_bps: float,
     allow_reentry: bool,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
+    combos = list(
+        product(
+            buy_threshold_values,
+            buy_window_values,
+            sell_threshold_values,
+            sell_window_values,
+        )
+    )
+    total = len(combos)
 
-    for buy_th, buy_win, sell_th, sell_win in product(
-        buy_threshold_values, buy_window_values, sell_threshold_values, sell_window_values
-    ):
+    for idx, (buy_th, buy_win, sell_th, sell_win) in enumerate(combos, start=1):
         trades_df, final_df, equity_df = run_threshold_simulation(
             price_panel=price_panel,
             initial_capital_by_ticker=initial_capital_by_ticker,
@@ -1015,6 +1023,8 @@ def run_grid_search(
                 "trade_count": trade_count,
             }
         )
+        if progress_callback:
+            progress_callback(idx, total)
 
     out = pd.DataFrame(rows)
     if not out.empty:
@@ -1345,6 +1355,14 @@ else:
 
     run_grid = st.button("Run Grid Search", type="primary")
     if run_grid:
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        def on_progress(done: int, total: int) -> None:
+            pct = int((done / total) * 100) if total > 0 else 0
+            progress_text.caption(f"Grid progress: {done} / {total}")
+            progress_bar.progress(pct)
+
         with st.spinner("Evaluating parameter combinations..."):
             grid_df = run_grid_search(
                 price_panel=price_panel,
@@ -1356,7 +1374,10 @@ else:
                 sell_mode=sell_mode,
                 fee_bps=float(fee_bps),
                 allow_reentry=allow_reentry,
+                progress_callback=on_progress,
             )
+        progress_text.caption(f"Grid progress: {combo_count} / {combo_count}")
+        progress_bar.progress(100)
 
         if grid_df.empty:
             st.warning("Grid search returned no results.")
