@@ -769,7 +769,9 @@ def fetch_close_panel(tickers: Sequence[str], start_dt, end_dt) -> pd.DataFrame:
 
 def run_threshold_simulation(
     price_panel: pd.DataFrame,
-    initial_capital_by_ticker: dict[str, float],
+    buy_unit_by_ticker: dict[str, float],
+    starting_cash: float,
+    annual_cash_yield_pct: float,
     buy_threshold_pct: float,
     buy_window_days: int,
     sell_threshold_pct: float,
@@ -778,19 +780,21 @@ def run_threshold_simulation(
     fee_bps: float,
     allow_reentry: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    tickers = list(initial_capital_by_ticker.keys())
+    tickers = list(buy_unit_by_ticker.keys())
     fee_buy = 1.0 + (fee_bps / 10000.0)
     fee_sell = 1.0 - (fee_bps / 10000.0)
+    annual_cash_yield = float(max(0.0, annual_cash_yield_pct)) / 100.0
 
+    cash_balance = float(max(0.0, starting_cash))
     state = {
         t: {
-            "cash": float(initial_capital_by_ticker[t]),
             "shares": 0.0,
             "last_price": None,
             "buy_count": 0,
             "sell_count": 0,
             "history": [],
-            "capital_contributed": float(initial_capital_by_ticker[t]),
+            "notional_bought": 0.0,
+            "proceeds_sold": 0.0,
         }
         for t in tickers
     }
@@ -799,20 +803,18 @@ def run_threshold_simulation(
     equity_curve: list[dict] = []
 
     def buy_one_unit(ticker: str, dt, price: float, signal_ret: float | None, signal_window: int):
+        nonlocal cash_balance
         stt = state[ticker]
-        unit_usd = float(initial_capital_by_ticker[ticker])
-        if unit_usd <= 0:
+        unit_usd = float(buy_unit_by_ticker[ticker])
+        if unit_usd <= 0 or cash_balance < unit_usd:
             return
 
-        cash_before = stt["cash"]
-        cash_used = min(cash_before, unit_usd)
-        external_contribution = max(0.0, unit_usd - cash_used)
-        stt["cash"] = cash_before - cash_used
-        stt["capital_contributed"] += external_contribution
-
+        cash_before = cash_balance
+        cash_balance -= unit_usd
         shares_bought = (unit_usd / fee_buy) / price
         stt["shares"] += shares_bought
         stt["buy_count"] += 1
+        stt["notional_bought"] += unit_usd
 
         trades.append(
             {
@@ -822,17 +824,22 @@ def run_threshold_simulation(
                 "price": price,
                 "shares": shares_bought,
                 "order_usd": unit_usd,
-                "cash_used": cash_used,
-                "external_contribution": external_contribution,
                 "cash_before": cash_before,
-                "cash_after": stt["cash"],
+                "cash_after": cash_balance,
                 "shares_after": stt["shares"],
                 "signal_return_pct": signal_ret,
                 "signal_window_days": signal_window,
             }
         )
 
+    prev_dt = None
     for dt, row in price_panel.iterrows():
+        if prev_dt is not None and annual_cash_yield > 0 and cash_balance > 0:
+            days_delta = max(0.0, (dt - prev_dt).total_seconds() / 86400.0)
+            if days_delta > 0:
+                cash_balance *= (1.0 + annual_cash_yield) ** (days_delta / 365.0)
+        prev_dt = dt
+
         for ticker in tickers:
             px = row.get(ticker)
             stt = state[ticker]
@@ -868,12 +875,13 @@ def run_threshold_simulation(
                 buy_signal = buy_ret is not None and buy_ret >= buy_threshold_pct
                 if sell_signal:
                     shares_before = stt["shares"]
-                    cash_before = stt["cash"]
+                    cash_before = cash_balance
                     gross = shares_before * price
                     net = gross * fee_sell
-                    stt["cash"] = cash_before + net
+                    cash_balance = cash_before + net
                     stt["shares"] = 0.0
                     stt["sell_count"] += 1
+                    stt["proceeds_sold"] += net
                     trades.append(
                         {
                             "dt": dt,
@@ -883,7 +891,7 @@ def run_threshold_simulation(
                             "shares": shares_before,
                             "proceeds_net": net,
                             "cash_before": cash_before,
-                            "cash_after": stt["cash"],
+                            "cash_after": cash_balance,
                             "shares_after": stt["shares"],
                             "signal_return_pct": sell_ret,
                             "signal_window_days": sell_window_days,
@@ -893,19 +901,20 @@ def run_threshold_simulation(
                     # Pyramiding behavior: keep adding one unit while trend remains valid.
                     buy_one_unit(ticker, dt, price, buy_ret, buy_window_days)
 
-        portfolio_value = 0.0
-        deployed_value = 0.0
+        invested_value = 0.0
         for ticker in tickers:
             stt = state[ticker]
             last_px = stt["last_price"] if stt["last_price"] is not None else 0.0
             position_value = stt["shares"] * last_px
-            deployed_value += position_value
-            portfolio_value += stt["cash"] + position_value
+            invested_value += position_value
+        total_wealth = cash_balance + invested_value
         equity_curve.append(
             {
                 "dt": dt,
-                "portfolio_value": portfolio_value,
-                "deployed_value": deployed_value,
+                "cash_balance": cash_balance,
+                "portfolio_value": invested_value,
+                "deployed_value": invested_value,
+                "total_wealth": total_wealth,
             }
         )
 
@@ -914,24 +923,17 @@ def run_threshold_simulation(
         stt = state[ticker]
         last_px = stt["last_price"] if stt["last_price"] is not None else 0.0
         position_value = stt["shares"] * last_px
-        total_value = stt["cash"] + position_value
-        initial_unit_usd = float(initial_capital_by_ticker[ticker])
-        capital_contributed = float(stt["capital_contributed"])
-        pnl = total_value - capital_contributed
-        pnl_pct = (pnl / capital_contributed) * 100.0 if capital_contributed > 0 else None
+        unit_usd = float(buy_unit_by_ticker[ticker])
         final_rows.append(
             {
                 "ticker": ticker,
-                "initial_unit_usd": initial_unit_usd,
-                "capital_contributed": capital_contributed,
-                "extra_contributed": capital_contributed - initial_unit_usd,
+                "buy_unit_usd": unit_usd,
                 "last_price": last_px,
-                "ending_cash": stt["cash"],
                 "ending_shares": stt["shares"],
                 "position_value": position_value,
-                "total_value": total_value,
-                "pnl": pnl,
-                "pnl_pct": pnl_pct,
+                "notional_bought": stt["notional_bought"],
+                "proceeds_sold": stt["proceeds_sold"],
+                "net_flow": stt["proceeds_sold"] - stt["notional_bought"],
                 "buys": stt["buy_count"],
                 "sells": stt["sell_count"],
             }
@@ -946,53 +948,8 @@ def run_threshold_simulation(
     if not equity_df.empty:
         equity_df["dt"] = pd.to_datetime(equity_df["dt"])
 
-    final_df = pd.DataFrame(final_rows).sort_values("pnl_pct", ascending=False).reset_index(drop=True)
+    final_df = pd.DataFrame(final_rows).sort_values("position_value", ascending=False).reset_index(drop=True)
     return trades_df, final_df, equity_df
-
-
-def compute_auc_return_metrics(equity_df: pd.DataFrame, final_value: float) -> dict:
-    if equity_df.empty or "deployed_value" not in equity_df.columns:
-        return {
-            "auc": None,
-            "avg_deployed": None,
-            "auc_return_pct": None,
-            "days": 0.0,
-        }
-
-    curve = equity_df[equity_df["deployed_value"] > 0].copy().sort_values("dt")
-    if curve.empty:
-        return {
-            "auc": 0.0,
-            "avg_deployed": 0.0,
-            "auc_return_pct": None,
-            "days": 0.0,
-        }
-
-    x_days = curve["dt"].astype("int64").to_numpy(dtype="float64") / 86_400_000_000_000.0
-    y = curve["deployed_value"].to_numpy(dtype="float64")
-
-    if len(x_days) == 1:
-        area = float(y[0])
-        avg_deployed = float(y[0])
-        span_days = 1.0
-    else:
-        dx = x_days[1:] - x_days[:-1]
-        area = float(((y[:-1] + y[1:]) * 0.5 * dx).sum())
-        span_days = float(x_days[-1] - x_days[0])
-        if span_days <= 0:
-            span_days = 1.0
-        avg_deployed = area / span_days if span_days > 0 else None
-
-    auc_return_pct = None
-    if avg_deployed is not None and avg_deployed > 0:
-        auc_return_pct = ((final_value / avg_deployed) - 1.0) * 100.0
-
-    return {
-        "auc": area,
-        "avg_deployed": avg_deployed,
-        "auc_return_pct": auc_return_pct,
-        "days": span_days,
-    }
 
 
 def build_float_grid(start: float, end: float, step: float) -> list[float]:
@@ -1016,7 +973,9 @@ def build_int_grid(start: int, end: int, step: int) -> list[int]:
 
 def run_grid_search(
     price_panel: pd.DataFrame,
-    initial_capital_by_ticker: dict[str, float],
+    buy_unit_by_ticker: dict[str, float],
+    starting_cash: float,
+    annual_cash_yield_pct: float,
     buy_threshold_values: Sequence[float],
     buy_window_values: Sequence[int],
     sell_threshold_values: Sequence[float],
@@ -1038,9 +997,11 @@ def run_grid_search(
     total = len(combos)
 
     for idx, (buy_th, buy_win, sell_th, sell_win) in enumerate(combos, start=1):
-        trades_df, final_df, equity_df = run_threshold_simulation(
+        trades_df, _, equity_df = run_threshold_simulation(
             price_panel=price_panel,
-            initial_capital_by_ticker=initial_capital_by_ticker,
+            buy_unit_by_ticker=buy_unit_by_ticker,
+            starting_cash=float(starting_cash),
+            annual_cash_yield_pct=float(annual_cash_yield_pct),
             buy_threshold_pct=float(buy_th),
             buy_window_days=int(buy_win),
             sell_threshold_pct=float(sell_th),
@@ -1050,18 +1011,22 @@ def run_grid_search(
             allow_reentry=allow_reentry,
         )
 
-        contributed_total = float(final_df["capital_contributed"].sum())
-        final_total = float(final_df["total_value"].sum())
-        pnl = final_total - contributed_total
-        capital_return_pct = (pnl / contributed_total) * 100.0 if contributed_total > 0 else None
-        auc_info = compute_auc_return_metrics(equity_df, final_total)
-        auc_return_pct = auc_info["auc_return_pct"]
-        avg_deployed = auc_info["avg_deployed"]
+        if equity_df.empty:
+            final_cash = float(starting_cash)
+            final_invested = 0.0
+            final_total = final_cash
+        else:
+            last = equity_df.iloc[-1]
+            final_cash = float(last["cash_balance"])
+            final_invested = float(last["portfolio_value"])
+            final_total = float(last["total_wealth"])
+        pnl = final_total - float(starting_cash)
+        total_return_pct = (pnl / float(starting_cash)) * 100.0 if float(starting_cash) > 0 else None
         trade_count = 0 if trades_df.empty else int(len(trades_df))
 
         max_drawdown_pct = None
-        if not equity_df.empty and equity_df["portfolio_value"].notna().any():
-            eq = equity_df["portfolio_value"].astype(float)
+        if not equity_df.empty and equity_df["total_wealth"].notna().any():
+            eq = equity_df["total_wealth"].astype(float)
             running_max = eq.cummax()
             dd = (eq / running_max) - 1.0
             max_drawdown_pct = float(dd.min() * 100.0)
@@ -1072,12 +1037,12 @@ def run_grid_search(
                 "buy_window_days": int(buy_win),
                 "sell_threshold_pct": float(sell_th),
                 "sell_window_days": int(sell_win),
-                "capital_contributed": contributed_total,
-                "final_value": final_total,
+                "starting_cash": float(starting_cash),
+                "final_cash": final_cash,
+                "final_invested": final_invested,
+                "final_total_wealth": final_total,
                 "pnl": pnl,
-                "capital_return_pct": capital_return_pct,
-                "auc_return_pct": auc_return_pct,
-                "avg_deployed": avg_deployed,
+                "total_return_pct": total_return_pct,
                 "max_drawdown_pct": max_drawdown_pct,
                 "trade_count": trade_count,
             }
@@ -1088,7 +1053,7 @@ def run_grid_search(
     out = pd.DataFrame(rows)
     if not out.empty:
         out = out.sort_values(
-            ["auc_return_pct", "final_value", "max_drawdown_pct"],
+            ["final_total_wealth", "max_drawdown_pct", "trade_count"],
             ascending=[False, False, False],
             na_position="last",
         ).reset_index(drop=True)
@@ -1241,10 +1206,11 @@ elif page == "Top Performers":
 else:
     _, _, sim_universe = render_classification_filters("sim")
     st.caption(
-        "Simulates rule-based buys/sells per ETF using daily closes. "
+        "Simulates rule-based buys/sells across selected ETFs with one shared cash pool using daily closes. "
         "Buy rule: price rises by threshold over buy window. "
         "Sell rule: drop or gain threshold over sell window. "
-        "When already invested, a new buy signal adds one more unit."
+        "When already invested, a new buy signal adds one more unit. "
+        "Idle cash compounds at the configured annual cash yield."
     )
 
     if not sim_universe:
@@ -1284,6 +1250,20 @@ else:
         fee_bps = st.number_input("Trading fee (bps)", min_value=0.0, max_value=200.0, value=0.0, step=0.5)
         allow_reentry = st.checkbox("Allow re-entry after selling", value=True)
 
+    c_cash_1, c_cash_2 = st.columns(2)
+    with c_cash_1:
+        starting_cash = st.number_input(
+            "Starting cash (USD)",
+            min_value=0.0,
+            max_value=100_000_000.0,
+            value=100_000.0,
+            step=1000.0,
+        )
+    with c_cash_2:
+        annual_cash_yield_pct = st.number_input(
+            "Cash yield annual %", min_value=0.0, max_value=25.0, value=2.0, step=0.1
+        )
+
     default_initial = st.number_input(
         "Default unit amount per ETF buy (USD)",
         min_value=0.0,
@@ -1320,9 +1300,12 @@ else:
     for _, row in edited_alloc.iterrows():
         alloc_map[str(row["ticker"])] = float(max(0.0, row["buy_unit_usd"]))
 
-    initial_capital_by_ticker = {t: float(alloc_map.get(t, default_initial)) for t in sim_tickers}
-    if sum(initial_capital_by_ticker.values()) <= 0:
-        st.warning("Total initial capital must be greater than zero.")
+    buy_unit_by_ticker = {t: float(alloc_map.get(t, default_initial)) for t in sim_tickers}
+    if sum(buy_unit_by_ticker.values()) <= 0:
+        st.warning("Total buy-unit configuration must be greater than zero.")
+        st.stop()
+    if starting_cash <= 0:
+        st.warning("Starting cash must be greater than zero.")
         st.stop()
 
     price_panel = fetch_close_panel(sim_tickers, sim_start, sim_end)
@@ -1332,7 +1315,9 @@ else:
 
     trades_df, final_df, equity_df = run_threshold_simulation(
         price_panel=price_panel,
-        initial_capital_by_ticker=initial_capital_by_ticker,
+        buy_unit_by_ticker=buy_unit_by_ticker,
+        starting_cash=float(starting_cash),
+        annual_cash_yield_pct=float(annual_cash_yield_pct),
         buy_threshold_pct=float(buy_threshold),
         buy_window_days=int(buy_window),
         sell_threshold_pct=float(sell_threshold),
@@ -1342,33 +1327,33 @@ else:
         allow_reentry=allow_reentry,
     )
 
-    base_units_total = float(final_df["initial_unit_usd"].sum())
-    contributed_total = float(final_df["capital_contributed"].sum())
-    final_total = float(final_df["total_value"].sum())
-    pnl_total = final_total - contributed_total
-    capital_return_pct = (pnl_total / contributed_total) * 100.0 if contributed_total > 0 else 0.0
-    auc_info = compute_auc_return_metrics(equity_df, final_total)
-    auc_return_pct = auc_info["auc_return_pct"]
-    avg_deployed = auc_info["avg_deployed"]
-    auc_days = auc_info["days"]
+    base_units_total = float(final_df["buy_unit_usd"].sum())
+    if equity_df.empty:
+        final_cash = float(starting_cash)
+        final_invested = 0.0
+        final_total = final_cash
+    else:
+        last_equity = equity_df.iloc[-1]
+        final_cash = float(last_equity["cash_balance"])
+        final_invested = float(last_equity["portfolio_value"])
+        final_total = float(last_equity["total_wealth"])
+    pnl_total = final_total - float(starting_cash)
+    total_return_pct = (pnl_total / float(starting_cash)) * 100.0 if float(starting_cash) > 0 else 0.0
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     with k1:
-        st.metric("Base Unit Total", f"${base_units_total:,.2f}")
+        st.metric("Starting Cash", f"${starting_cash:,.2f}")
     with k2:
-        st.metric("Capital Contributed", f"${contributed_total:,.2f}")
+        st.metric("Final Cash", f"${final_cash:,.2f}")
     with k3:
-        st.metric("Final Value", f"${final_total:,.2f}")
+        st.metric("Final Portfolio", f"${final_invested:,.2f}")
     with k4:
-        st.metric("PnL", f"${pnl_total:,.2f}")
+        st.metric("Final Total Wealth", f"${final_total:,.2f}")
     with k5:
-        st.metric("Capital Return %", f"{capital_return_pct:.2f}%")
+        st.metric("PnL", f"${pnl_total:,.2f}")
     with k6:
-        st.metric("AUC Return %", "n/a" if auc_return_pct is None else f"{auc_return_pct:.2f}%")
-    st.caption(
-        f"AUC basis uses deployed-value curve only; avg deployed = "
-        f"${0.0 if avg_deployed is None else avg_deployed:,.2f} over {auc_days:.1f} days."
-    )
+        st.metric("Total Return %", f"{total_return_pct:.2f}%")
+    st.caption(f"Configured buy-unit total across tickers: ${base_units_total:,.2f}")
     st.metric("Trades", f"{0 if trades_df.empty else len(trades_df)}")
 
     st.subheader("Final holdings")
@@ -1377,17 +1362,18 @@ else:
     if not equity_df.empty:
         curve_df = equity_df.melt(
             id_vars=["dt"],
-            value_vars=["portfolio_value", "deployed_value"],
+            value_vars=["cash_balance", "portfolio_value", "total_wealth"],
             var_name="curve",
             value_name="value",
         )
         curve_df["curve"] = curve_df["curve"].map(
             {
-                "portfolio_value": "Portfolio Value",
-                "deployed_value": "Deployed Value",
+                "cash_balance": "Cash",
+                "portfolio_value": "Portfolio (Invested)",
+                "total_wealth": "Total Wealth",
             }
         )
-        eq_fig = px.line(curve_df, x="dt", y="value", color="curve", title="Portfolio vs deployed value over time")
+        eq_fig = px.line(curve_df, x="dt", y="value", color="curve", title="Cash, portfolio, and total wealth over time")
         st.plotly_chart(style_figure(eq_fig), use_container_width=True)
 
     st.subheader("Trade log (all buys and sells)")
@@ -1400,7 +1386,7 @@ else:
     st.subheader("Grid Search - Best 4-Lever Combination")
     st.caption(
         "Runs a parameter sweep over buy threshold/window and sell threshold/window. "
-        "Objective: maximize AUC return % (final value versus time-averaged deployed capital)."
+        "Objective: maximize final total wealth (cash + portfolio)."
     )
 
     g1, g2, g3, g4 = st.columns(4)
@@ -1448,7 +1434,9 @@ else:
         with st.spinner("Evaluating parameter combinations..."):
             grid_df = run_grid_search(
                 price_panel=price_panel,
-                initial_capital_by_ticker=initial_capital_by_ticker,
+                buy_unit_by_ticker=buy_unit_by_ticker,
+                starting_cash=float(starting_cash),
+                annual_cash_yield_pct=float(annual_cash_yield_pct),
                 buy_threshold_values=buy_th_values,
                 buy_window_values=buy_win_values,
                 sell_threshold_values=sell_th_values,
@@ -1467,8 +1455,7 @@ else:
             best = grid_df.iloc[0]
             b1, b2, b3, b4, b5 = st.columns(5)
             with b1:
-                best_auc = best.get("auc_return_pct")
-                st.metric("Best AUC Return %", "n/a" if pd.isna(best_auc) else f"{best_auc:.2f}%")
+                st.metric("Best Final Wealth", f"${best['final_total_wealth']:,.2f}")
             with b2:
                 st.metric("Best Buy Lever", f"{best['buy_threshold_pct']:.2f}% / {int(best['buy_window_days'])}d")
             with b3:
@@ -1476,7 +1463,7 @@ else:
             with b4:
                 st.metric("Trades (best)", f"{int(best['trade_count'])}")
             with b5:
-                best_cap = best.get("capital_return_pct")
-                st.metric("Capital Return %", "n/a" if pd.isna(best_cap) else f"{best_cap:.2f}%")
+                best_ret = best.get("total_return_pct")
+                st.metric("Total Return %", "n/a" if pd.isna(best_ret) else f"{best_ret:.2f}%")
 
             st.dataframe(grid_df.head(30), use_container_width=True)
