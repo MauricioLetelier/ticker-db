@@ -772,6 +772,8 @@ def run_threshold_simulation(
     buy_unit_by_ticker: dict[str, float],
     starting_cash: float,
     annual_cash_yield_pct: float,
+    annual_borrow_rate_pct: float,
+    allow_leverage: bool,
     buy_threshold_pct: float,
     buy_window_days: int,
     sell_threshold_pct: float,
@@ -784,6 +786,7 @@ def run_threshold_simulation(
     fee_buy = 1.0 + (fee_bps / 10000.0)
     fee_sell = 1.0 - (fee_bps / 10000.0)
     annual_cash_yield = float(max(0.0, annual_cash_yield_pct)) / 100.0
+    annual_borrow_rate = float(max(0.0, annual_borrow_rate_pct)) / 100.0
 
     cash_balance = float(max(0.0, starting_cash))
     state = {
@@ -806,7 +809,9 @@ def run_threshold_simulation(
         nonlocal cash_balance
         stt = state[ticker]
         unit_usd = float(buy_unit_by_ticker[ticker])
-        if unit_usd <= 0 or cash_balance < unit_usd:
+        if unit_usd <= 0:
+            return
+        if (not allow_leverage) and cash_balance < unit_usd:
             return
 
         cash_before = cash_balance
@@ -834,10 +839,13 @@ def run_threshold_simulation(
 
     prev_dt = None
     for dt, row in price_panel.iterrows():
-        if prev_dt is not None and annual_cash_yield > 0 and cash_balance > 0:
+        if prev_dt is not None:
             days_delta = max(0.0, (dt - prev_dt).total_seconds() / 86400.0)
-            if days_delta > 0:
+            if days_delta > 0 and cash_balance > 0 and annual_cash_yield > 0:
                 cash_balance *= (1.0 + annual_cash_yield) ** (days_delta / 365.0)
+            elif days_delta > 0 and cash_balance < 0 and annual_borrow_rate > 0:
+                # Negative cash represents borrowed funds; debt grows with borrow interest.
+                cash_balance *= (1.0 + annual_borrow_rate) ** (days_delta / 365.0)
         prev_dt = dt
 
         for ticker in tickers:
@@ -976,6 +984,8 @@ def run_grid_search(
     buy_unit_by_ticker: dict[str, float],
     starting_cash: float,
     annual_cash_yield_pct: float,
+    annual_borrow_rate_pct: float,
+    allow_leverage: bool,
     buy_threshold_values: Sequence[float],
     buy_window_values: Sequence[int],
     sell_threshold_values: Sequence[float],
@@ -1002,6 +1012,8 @@ def run_grid_search(
             buy_unit_by_ticker=buy_unit_by_ticker,
             starting_cash=float(starting_cash),
             annual_cash_yield_pct=float(annual_cash_yield_pct),
+            annual_borrow_rate_pct=float(annual_borrow_rate_pct),
+            allow_leverage=allow_leverage,
             buy_threshold_pct=float(buy_th),
             buy_window_days=int(buy_win),
             sell_threshold_pct=float(sell_th),
@@ -1210,7 +1222,7 @@ else:
         "Buy rule: price rises by threshold over buy window. "
         "Sell rule: drop or gain threshold over sell window. "
         "When already invested, a new buy signal adds one more unit. "
-        "Idle cash compounds at the configured annual cash yield."
+        "Idle cash compounds at the configured annual cash yield, and negative cash pays borrow interest."
     )
 
     if not sim_universe:
@@ -1250,7 +1262,7 @@ else:
         fee_bps = st.number_input("Trading fee (bps)", min_value=0.0, max_value=200.0, value=0.0, step=0.5)
         allow_reentry = st.checkbox("Allow re-entry after selling", value=True)
 
-    c_cash_1, c_cash_2 = st.columns(2)
+    c_cash_1, c_cash_2, c_cash_3 = st.columns(3)
     with c_cash_1:
         starting_cash = st.number_input(
             "Starting cash (USD)",
@@ -1263,6 +1275,11 @@ else:
         annual_cash_yield_pct = st.number_input(
             "Cash yield annual %", min_value=0.0, max_value=25.0, value=2.0, step=0.1
         )
+    with c_cash_3:
+        annual_borrow_rate_pct = st.number_input(
+            "Borrow rate annual %", min_value=0.0, max_value=50.0, value=4.0, step=0.1
+        )
+    allow_leverage = st.checkbox("Allow leverage (cash can go negative)", value=True)
 
     default_initial = st.number_input(
         "Default unit amount per ETF buy (USD)",
@@ -1271,12 +1288,16 @@ else:
         value=1000.0,
         step=100.0,
     )
+    st.caption("This default auto-fills new tickers. Use the button below to overwrite all selected tickers.")
 
     if "sim_alloc_map" not in st.session_state:
         st.session_state["sim_alloc_map"] = {}
     alloc_map: dict[str, float] = st.session_state["sim_alloc_map"]
     for t in sim_tickers:
         if t not in alloc_map:
+            alloc_map[t] = float(default_initial)
+    if st.button("Apply default to all selected tickers", key="sim_apply_default_units"):
+        for t in sim_tickers:
             alloc_map[t] = float(default_initial)
 
     alloc_df = pd.DataFrame(
@@ -1318,6 +1339,8 @@ else:
         buy_unit_by_ticker=buy_unit_by_ticker,
         starting_cash=float(starting_cash),
         annual_cash_yield_pct=float(annual_cash_yield_pct),
+        annual_borrow_rate_pct=float(annual_borrow_rate_pct),
+        allow_leverage=allow_leverage,
         buy_threshold_pct=float(buy_threshold),
         buy_window_days=int(buy_window),
         sell_threshold_pct=float(sell_threshold),
@@ -1437,6 +1460,8 @@ else:
                 buy_unit_by_ticker=buy_unit_by_ticker,
                 starting_cash=float(starting_cash),
                 annual_cash_yield_pct=float(annual_cash_yield_pct),
+                annual_borrow_rate_pct=float(annual_borrow_rate_pct),
+                allow_leverage=allow_leverage,
                 buy_threshold_values=buy_th_values,
                 buy_window_values=buy_win_values,
                 sell_threshold_values=sell_th_values,
