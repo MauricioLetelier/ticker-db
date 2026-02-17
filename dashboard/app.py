@@ -894,11 +894,20 @@ def run_threshold_simulation(
                     buy_one_unit(ticker, dt, price, buy_ret, buy_window_days)
 
         portfolio_value = 0.0
+        deployed_value = 0.0
         for ticker in tickers:
             stt = state[ticker]
             last_px = stt["last_price"] if stt["last_price"] is not None else 0.0
-            portfolio_value += stt["cash"] + (stt["shares"] * last_px)
-        equity_curve.append({"dt": dt, "portfolio_value": portfolio_value})
+            position_value = stt["shares"] * last_px
+            deployed_value += position_value
+            portfolio_value += stt["cash"] + position_value
+        equity_curve.append(
+            {
+                "dt": dt,
+                "portfolio_value": portfolio_value,
+                "deployed_value": deployed_value,
+            }
+        )
 
     final_rows: list[dict] = []
     for ticker in tickers:
@@ -939,6 +948,51 @@ def run_threshold_simulation(
 
     final_df = pd.DataFrame(final_rows).sort_values("pnl_pct", ascending=False).reset_index(drop=True)
     return trades_df, final_df, equity_df
+
+
+def compute_auc_return_metrics(equity_df: pd.DataFrame, final_value: float) -> dict:
+    if equity_df.empty or "deployed_value" not in equity_df.columns:
+        return {
+            "auc": None,
+            "avg_deployed": None,
+            "auc_return_pct": None,
+            "days": 0.0,
+        }
+
+    curve = equity_df[equity_df["deployed_value"] > 0].copy().sort_values("dt")
+    if curve.empty:
+        return {
+            "auc": 0.0,
+            "avg_deployed": 0.0,
+            "auc_return_pct": None,
+            "days": 0.0,
+        }
+
+    x_days = curve["dt"].astype("int64").to_numpy(dtype="float64") / 86_400_000_000_000.0
+    y = curve["deployed_value"].to_numpy(dtype="float64")
+
+    if len(x_days) == 1:
+        area = float(y[0])
+        avg_deployed = float(y[0])
+        span_days = 1.0
+    else:
+        dx = x_days[1:] - x_days[:-1]
+        area = float(((y[:-1] + y[1:]) * 0.5 * dx).sum())
+        span_days = float(x_days[-1] - x_days[0])
+        if span_days <= 0:
+            span_days = 1.0
+        avg_deployed = area / span_days if span_days > 0 else None
+
+    auc_return_pct = None
+    if avg_deployed is not None and avg_deployed > 0:
+        auc_return_pct = ((final_value / avg_deployed) - 1.0) * 100.0
+
+    return {
+        "auc": area,
+        "avg_deployed": avg_deployed,
+        "auc_return_pct": auc_return_pct,
+        "days": span_days,
+    }
 
 
 def build_float_grid(start: float, end: float, step: float) -> list[float]:
@@ -999,7 +1053,10 @@ def run_grid_search(
         contributed_total = float(final_df["capital_contributed"].sum())
         final_total = float(final_df["total_value"].sum())
         pnl = final_total - contributed_total
-        ret_pct = (pnl / contributed_total) * 100.0 if contributed_total > 0 else None
+        capital_return_pct = (pnl / contributed_total) * 100.0 if contributed_total > 0 else None
+        auc_info = compute_auc_return_metrics(equity_df, final_total)
+        auc_return_pct = auc_info["auc_return_pct"]
+        avg_deployed = auc_info["avg_deployed"]
         trade_count = 0 if trades_df.empty else int(len(trades_df))
 
         max_drawdown_pct = None
@@ -1018,7 +1075,9 @@ def run_grid_search(
                 "capital_contributed": contributed_total,
                 "final_value": final_total,
                 "pnl": pnl,
-                "return_pct": ret_pct,
+                "capital_return_pct": capital_return_pct,
+                "auc_return_pct": auc_return_pct,
+                "avg_deployed": avg_deployed,
                 "max_drawdown_pct": max_drawdown_pct,
                 "trade_count": trade_count,
             }
@@ -1029,7 +1088,7 @@ def run_grid_search(
     out = pd.DataFrame(rows)
     if not out.empty:
         out = out.sort_values(
-            ["return_pct", "final_value", "max_drawdown_pct"],
+            ["auc_return_pct", "final_value", "max_drawdown_pct"],
             ascending=[False, False, False],
             na_position="last",
         ).reset_index(drop=True)
@@ -1287,25 +1346,48 @@ else:
     contributed_total = float(final_df["capital_contributed"].sum())
     final_total = float(final_df["total_value"].sum())
     pnl_total = final_total - contributed_total
-    pnl_total_pct = (pnl_total / contributed_total) * 100.0 if contributed_total > 0 else 0.0
+    capital_return_pct = (pnl_total / contributed_total) * 100.0 if contributed_total > 0 else 0.0
+    auc_info = compute_auc_return_metrics(equity_df, final_total)
+    auc_return_pct = auc_info["auc_return_pct"]
+    avg_deployed = auc_info["avg_deployed"]
+    auc_days = auc_info["days"]
 
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
     with k1:
         st.metric("Base Unit Total", f"${base_units_total:,.2f}")
     with k2:
         st.metric("Capital Contributed", f"${contributed_total:,.2f}")
     with k3:
-        st.metric("Final Value", f"${final_total:,.2f}", f"{pnl_total_pct:.2f}%")
+        st.metric("Final Value", f"${final_total:,.2f}")
     with k4:
         st.metric("PnL", f"${pnl_total:,.2f}")
     with k5:
-        st.metric("Trades", f"{0 if trades_df.empty else len(trades_df)}")
+        st.metric("Capital Return %", f"{capital_return_pct:.2f}%")
+    with k6:
+        st.metric("AUC Return %", "n/a" if auc_return_pct is None else f"{auc_return_pct:.2f}%")
+    st.caption(
+        f"AUC basis uses deployed-value curve only; avg deployed = "
+        f"${0.0 if avg_deployed is None else avg_deployed:,.2f} over {auc_days:.1f} days."
+    )
+    st.metric("Trades", f"{0 if trades_df.empty else len(trades_df)}")
 
     st.subheader("Final holdings")
     st.dataframe(final_df, use_container_width=True)
 
     if not equity_df.empty:
-        eq_fig = px.line(equity_df, x="dt", y="portfolio_value", title="Portfolio value over time")
+        curve_df = equity_df.melt(
+            id_vars=["dt"],
+            value_vars=["portfolio_value", "deployed_value"],
+            var_name="curve",
+            value_name="value",
+        )
+        curve_df["curve"] = curve_df["curve"].map(
+            {
+                "portfolio_value": "Portfolio Value",
+                "deployed_value": "Deployed Value",
+            }
+        )
+        eq_fig = px.line(curve_df, x="dt", y="value", color="curve", title="Portfolio vs deployed value over time")
         st.plotly_chart(style_figure(eq_fig), use_container_width=True)
 
     st.subheader("Trade log (all buys and sells)")
@@ -1318,7 +1400,7 @@ else:
     st.subheader("Grid Search - Best 4-Lever Combination")
     st.caption(
         "Runs a parameter sweep over buy threshold/window and sell threshold/window. "
-        "Objective: maximize total return %."
+        "Objective: maximize AUC return % (final value versus time-averaged deployed capital)."
     )
 
     g1, g2, g3, g4 = st.columns(4)
@@ -1383,14 +1465,18 @@ else:
             st.warning("Grid search returned no results.")
         else:
             best = grid_df.iloc[0]
-            b1, b2, b3, b4 = st.columns(4)
+            b1, b2, b3, b4, b5 = st.columns(5)
             with b1:
-                st.metric("Best Return %", f"{best['return_pct']:.2f}%")
+                best_auc = best.get("auc_return_pct")
+                st.metric("Best AUC Return %", "n/a" if pd.isna(best_auc) else f"{best_auc:.2f}%")
             with b2:
                 st.metric("Best Buy Lever", f"{best['buy_threshold_pct']:.2f}% / {int(best['buy_window_days'])}d")
             with b3:
                 st.metric("Best Sell Lever", f"{best['sell_threshold_pct']:.2f}% / {int(best['sell_window_days'])}d")
             with b4:
                 st.metric("Trades (best)", f"{int(best['trade_count'])}")
+            with b5:
+                best_cap = best.get("capital_return_pct")
+                st.metric("Capital Return %", "n/a" if pd.isna(best_cap) else f"{best_cap:.2f}%")
 
             st.dataframe(grid_df.head(30), use_container_width=True)
