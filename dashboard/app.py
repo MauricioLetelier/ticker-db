@@ -993,23 +993,30 @@ def run_grid_search(
     sell_mode: str,
     fee_bps: float,
     allow_reentry: bool,
+    deployment_values: Sequence[float] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
+    deploy_vals = [None] if not deployment_values else [float(v) for v in deployment_values]
     combos = list(
         product(
             buy_threshold_values,
             buy_window_values,
             sell_threshold_values,
             sell_window_values,
+            deploy_vals,
         )
     )
     total = len(combos)
 
-    for idx, (buy_th, buy_win, sell_th, sell_win) in enumerate(combos, start=1):
+    for idx, (buy_th, buy_win, sell_th, sell_win, deploy_unit) in enumerate(combos, start=1):
+        local_buy_units = buy_unit_by_ticker
+        if deploy_unit is not None:
+            local_buy_units = {t: float(deploy_unit) for t in buy_unit_by_ticker.keys()}
+
         trades_df, _, equity_df = run_threshold_simulation(
             price_panel=price_panel,
-            buy_unit_by_ticker=buy_unit_by_ticker,
+            buy_unit_by_ticker=local_buy_units,
             starting_cash=float(starting_cash),
             annual_cash_yield_pct=float(annual_cash_yield_pct),
             annual_borrow_rate_pct=float(annual_borrow_rate_pct),
@@ -1049,6 +1056,7 @@ def run_grid_search(
                 "buy_window_days": int(buy_win),
                 "sell_threshold_pct": float(sell_th),
                 "sell_window_days": int(sell_win),
+                "deployment_per_trade_usd": deploy_unit,
                 "starting_cash": float(starting_cash),
                 "final_cash": final_cash,
                 "final_invested": final_invested,
@@ -1395,6 +1403,10 @@ else:
         st.metric("PnL", f"${pnl_total:,.2f}")
     with k6:
         st.metric("Total Return %", f"{total_return_pct:.2f}%")
+    st.caption(
+        f"Leverage: {'ON' if allow_leverage else 'OFF'} | "
+        f"Cash yield: {annual_cash_yield_pct:.2f}% | Borrow rate: {annual_borrow_rate_pct:.2f}%"
+    )
     st.caption(f"Configured buy-unit total across tickers: ${base_units_total:,.2f}")
     st.metric("Trades", f"{0 if trades_df.empty else len(trades_df)}")
 
@@ -1449,6 +1461,27 @@ else:
         sell_win_max = st.number_input("Sell window max (days)", min_value=2, max_value=120, value=12, step=1)
         sell_win_step = st.number_input("Sell window step", min_value=1, max_value=30, value=3, step=1)
 
+    st.markdown("**Position sizing in grid**")
+    grid_deployment_mode = st.radio(
+        "Grid deployment sizing",
+        ["Use current simulator sizing", "Sweep deployment per trade (USD)"],
+        horizontal=True,
+        key="sim_grid_deployment_mode",
+    )
+    grid_deployment_values: list[float] | None = None
+    if grid_deployment_mode == "Sweep deployment per trade (USD)":
+        gd1, gd2, gd3 = st.columns(3)
+        with gd1:
+            dep_min = st.number_input("Deploy min (USD)", min_value=0.0, max_value=1_000_000.0, value=500.0, step=100.0)
+        with gd2:
+            dep_max = st.number_input("Deploy max (USD)", min_value=0.0, max_value=1_000_000.0, value=3000.0, step=100.0)
+        with gd3:
+            dep_step = st.number_input("Deploy step (USD)", min_value=50.0, max_value=100_000.0, value=500.0, step=50.0)
+        if dep_min > dep_max:
+            st.error("Deploy min must be <= deploy max.")
+            st.stop()
+        grid_deployment_values = build_float_grid(dep_min, dep_max, dep_step)
+
     if buy_th_min > buy_th_max or buy_win_min > buy_win_max or sell_th_min > sell_th_max or sell_win_min > sell_win_max:
         st.error("Each min value must be <= max value for grid search.")
         st.stop()
@@ -1458,7 +1491,8 @@ else:
     sell_th_values = build_float_grid(sell_th_min, sell_th_max, sell_th_step)
     sell_win_values = build_int_grid(int(sell_win_min), int(sell_win_max), int(sell_win_step))
 
-    combo_count = len(buy_th_values) * len(buy_win_values) * len(sell_th_values) * len(sell_win_values)
+    dep_count = 1 if not grid_deployment_values else len(grid_deployment_values)
+    combo_count = len(buy_th_values) * len(buy_win_values) * len(sell_th_values) * len(sell_win_values) * dep_count
     st.caption(f"Combinations to evaluate: {combo_count}")
     if combo_count > 400:
         st.warning("Large grid. Consider tightening ranges for faster results.")
@@ -1488,6 +1522,7 @@ else:
                 sell_mode=sell_mode,
                 fee_bps=float(fee_bps),
                 allow_reentry=allow_reentry,
+                deployment_values=grid_deployment_values,
                 progress_callback=on_progress,
             )
         progress_text.caption(f"Grid progress: {combo_count} / {combo_count}")
@@ -1497,7 +1532,7 @@ else:
             st.warning("Grid search returned no results.")
         else:
             best = grid_df.iloc[0]
-            b1, b2, b3, b4, b5 = st.columns(5)
+            b1, b2, b3, b4, b5, b6 = st.columns(6)
             with b1:
                 st.metric("Best Final Wealth", f"${best['final_total_wealth']:,.2f}")
             with b2:
@@ -1509,5 +1544,9 @@ else:
             with b5:
                 best_ret = best.get("total_return_pct")
                 st.metric("Total Return %", "n/a" if pd.isna(best_ret) else f"{best_ret:.2f}%")
+            with b6:
+                best_dep = best.get("deployment_per_trade_usd")
+                dep_label = "current sizing" if pd.isna(best_dep) else f"${float(best_dep):,.0f}"
+                st.metric("Best Deployment", dep_label)
 
             st.dataframe(grid_df.head(30), use_container_width=True)

@@ -1,7 +1,7 @@
 import os
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import psycopg
@@ -169,6 +169,36 @@ def upsert_1m(conn: psycopg.Connection, ticker: str, df: pd.DataFrame) -> None:
         """, rows)
 
 
+def get_latest_1d_dt_map(conn: psycopg.Connection, tickers: list[str]) -> dict[str, date]:
+    if not tickers:
+        return {}
+    with conn.cursor() as cur:
+        # Single indexed pass to get the latest date per ticker.
+        cur.execute(
+            """
+            SELECT t.ticker, t.dt
+            FROM (
+              SELECT DISTINCT ON (ticker) ticker, dt
+              FROM prices_1d
+              WHERE ticker = ANY(%s)
+              ORDER BY ticker, dt DESC
+            ) AS t;
+            """,
+            (tickers,),
+        )
+        rows = cur.fetchall()
+    return {str(t): dt for t, dt in rows}
+
+
+def get_global_latest_1d_dt(conn: psycopg.Connection, tickers: list[str]) -> date | None:
+    if not tickers:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(dt) FROM prices_1d WHERE ticker = ANY(%s);", (tickers,))
+        row = cur.fetchone()
+    return None if not row or row[0] is None else row[0]
+
+
 def cleanup_1m(conn: psycopg.Connection, keep_hours: int) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=keep_hours)
     with conn.cursor() as cur:
@@ -201,13 +231,28 @@ def main() -> int:
     intraday_period = str(ucfg.get("intraday_period", "1d"))
     keep_1m = int(ucfg.get("keep_1m_hours", 30))
     intraday_truncate_before_load = bool(ucfg.get("intraday_truncate_before_load", True))
+    daily_start_mode = str(ucfg.get("daily_start_mode", "from_db")).lower()
+    daily_overlap_days = max(0, int(ucfg.get("daily_overlap_days", 3)))
+    daily_bootstrap_lookback_days = max(1, int(ucfg.get("daily_bootstrap_lookback_days", lookback)))
+    valid_start_modes = {"from_db", "from_db_global", "fixed_lookback"}
+    if daily_start_mode not in valid_start_modes:
+        LOGGER.warning("invalid daily_start_mode=%s, defaulting to from_db", daily_start_mode)
+        daily_start_mode = "from_db"
 
-    start_dt = (datetime.now(timezone.utc) - timedelta(days=lookback)).date().isoformat()
+    today_utc = datetime.now(timezone.utc).date()
+    fallback_start_fixed = today_utc - timedelta(days=lookback)
+    fallback_start_bootstrap = today_utc - timedelta(days=daily_bootstrap_lookback_days)
     success_count = 0
     failed_tickers = []
 
     with get_conn(cfg) as conn:
         ensure_tables(conn)
+        latest_1d_map: dict[str, date] = {}
+        latest_1d_global: date | None = None
+        if daily_start_mode == "from_db":
+            latest_1d_map = get_latest_1d_dt_map(conn, tickers)
+        elif daily_start_mode == "from_db_global":
+            latest_1d_global = get_global_latest_1d_dt(conn, tickers)
 
         if intraday_enabled and intraday_truncate_before_load:
             try:
@@ -221,6 +266,21 @@ def main() -> int:
 
         for t in tickers:
             try:
+                if daily_start_mode == "from_db":
+                    latest_dt = latest_1d_map.get(t)
+                    if latest_dt is None:
+                        start_day = fallback_start_bootstrap
+                    else:
+                        start_day = latest_dt - timedelta(days=daily_overlap_days)
+                elif daily_start_mode == "from_db_global":
+                    if latest_1d_global is None:
+                        start_day = fallback_start_bootstrap
+                    else:
+                        start_day = latest_1d_global - timedelta(days=daily_overlap_days)
+                else:
+                    start_day = fallback_start_fixed
+
+                start_dt = start_day.isoformat()
                 df1d = yf.download(t, start=start_dt, interval="1d", auto_adjust=False, progress=False)
                 df1d = normalize_ohlcv(df1d, t)
                 upsert_1d(conn, t, df1d)
@@ -235,8 +295,9 @@ def main() -> int:
                 conn.commit()
                 success_count += 1
                 LOGGER.info(
-                    "updated ticker=%s daily_rows=%s intraday_rows=%s",
+                    "updated ticker=%s daily_start=%s daily_rows=%s intraday_rows=%s",
                     t,
+                    start_dt,
                     0 if df1d is None else len(df1d),
                     intraday_rows,
                 )

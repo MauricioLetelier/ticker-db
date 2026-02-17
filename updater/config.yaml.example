@@ -10,6 +10,14 @@ db:
   user: "appuser"
 
 update:
+  # 1d download start strategy:
+  # - from_db: start from each ticker's latest stored date minus overlap days
+  # - from_db_global: start from latest stored date across the selected ticker set
+  # - fixed_lookback: always start from (today - daily_lookback_days)
+  daily_start_mode: "from_db"
+  daily_overlap_days: 3
+  # Used only when a ticker has no rows in prices_1d yet.
+  daily_bootstrap_lookback_days: 3650
   daily_lookback_days: 14
   intraday_enabled: true
   intraday_truncate_before_load: true
