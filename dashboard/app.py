@@ -21,6 +21,7 @@
 
 import os
 from datetime import date
+from itertools import product
 from typing import Sequence, Literal, Tuple
 
 import pandas as pd
@@ -940,6 +941,91 @@ def run_threshold_simulation(
     return trades_df, final_df, equity_df
 
 
+def build_float_grid(start: float, end: float, step: float) -> list[float]:
+    if step <= 0:
+        return [float(start)]
+    vals: list[float] = []
+    x = float(start)
+    guard = 0
+    while x <= float(end) + 1e-9 and guard < 5000:
+        vals.append(round(x, 6))
+        x += float(step)
+        guard += 1
+    return vals
+
+
+def build_int_grid(start: int, end: int, step: int) -> list[int]:
+    if step <= 0:
+        return [int(start)]
+    return list(range(int(start), int(end) + 1, int(step)))
+
+
+def run_grid_search(
+    price_panel: pd.DataFrame,
+    initial_capital_by_ticker: dict[str, float],
+    buy_threshold_values: Sequence[float],
+    buy_window_values: Sequence[int],
+    sell_threshold_values: Sequence[float],
+    sell_window_values: Sequence[int],
+    sell_mode: str,
+    fee_bps: float,
+    allow_reentry: bool,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+
+    for buy_th, buy_win, sell_th, sell_win in product(
+        buy_threshold_values, buy_window_values, sell_threshold_values, sell_window_values
+    ):
+        trades_df, final_df, equity_df = run_threshold_simulation(
+            price_panel=price_panel,
+            initial_capital_by_ticker=initial_capital_by_ticker,
+            buy_threshold_pct=float(buy_th),
+            buy_window_days=int(buy_win),
+            sell_threshold_pct=float(sell_th),
+            sell_window_days=int(sell_win),
+            sell_mode=sell_mode,
+            fee_bps=float(fee_bps),
+            allow_reentry=allow_reentry,
+        )
+
+        contributed_total = float(final_df["capital_contributed"].sum())
+        final_total = float(final_df["total_value"].sum())
+        pnl = final_total - contributed_total
+        ret_pct = (pnl / contributed_total) * 100.0 if contributed_total > 0 else None
+        trade_count = 0 if trades_df.empty else int(len(trades_df))
+
+        max_drawdown_pct = None
+        if not equity_df.empty and equity_df["portfolio_value"].notna().any():
+            eq = equity_df["portfolio_value"].astype(float)
+            running_max = eq.cummax()
+            dd = (eq / running_max) - 1.0
+            max_drawdown_pct = float(dd.min() * 100.0)
+
+        rows.append(
+            {
+                "buy_threshold_pct": float(buy_th),
+                "buy_window_days": int(buy_win),
+                "sell_threshold_pct": float(sell_th),
+                "sell_window_days": int(sell_win),
+                "capital_contributed": contributed_total,
+                "final_value": final_total,
+                "pnl": pnl,
+                "return_pct": ret_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+                "trade_count": trade_count,
+            }
+        )
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(
+            ["return_pct", "final_value", "max_drawdown_pct"],
+            ascending=[False, False, False],
+            na_position="last",
+        ).reset_index(drop=True)
+    return out
+
+
 # -----------------------------
 # UI
 # -----------------------------
@@ -1217,3 +1303,73 @@ else:
         st.info("No trades were triggered with current thresholds.")
     else:
         st.dataframe(trades_df, use_container_width=True)
+
+    st.divider()
+    st.subheader("Grid Search - Best 4-Lever Combination")
+    st.caption(
+        "Runs a parameter sweep over buy threshold/window and sell threshold/window. "
+        "Objective: maximize total return %."
+    )
+
+    g1, g2, g3, g4 = st.columns(4)
+    with g1:
+        buy_th_min = st.number_input("Buy threshold min %", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
+        buy_th_max = st.number_input("Buy threshold max %", min_value=0.1, max_value=50.0, value=5.0, step=0.1)
+        buy_th_step = st.number_input("Buy threshold step %", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+    with g2:
+        buy_win_min = st.number_input("Buy window min (days)", min_value=2, max_value=120, value=3, step=1)
+        buy_win_max = st.number_input("Buy window max (days)", min_value=2, max_value=120, value=12, step=1)
+        buy_win_step = st.number_input("Buy window step", min_value=1, max_value=30, value=3, step=1)
+    with g3:
+        sell_th_min = st.number_input("Sell threshold min %", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
+        sell_th_max = st.number_input("Sell threshold max %", min_value=0.1, max_value=50.0, value=5.0, step=0.1)
+        sell_th_step = st.number_input("Sell threshold step %", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+    with g4:
+        sell_win_min = st.number_input("Sell window min (days)", min_value=2, max_value=120, value=3, step=1)
+        sell_win_max = st.number_input("Sell window max (days)", min_value=2, max_value=120, value=12, step=1)
+        sell_win_step = st.number_input("Sell window step", min_value=1, max_value=30, value=3, step=1)
+
+    if buy_th_min > buy_th_max or buy_win_min > buy_win_max or sell_th_min > sell_th_max or sell_win_min > sell_win_max:
+        st.error("Each min value must be <= max value for grid search.")
+        st.stop()
+
+    buy_th_values = build_float_grid(buy_th_min, buy_th_max, buy_th_step)
+    buy_win_values = build_int_grid(int(buy_win_min), int(buy_win_max), int(buy_win_step))
+    sell_th_values = build_float_grid(sell_th_min, sell_th_max, sell_th_step)
+    sell_win_values = build_int_grid(int(sell_win_min), int(sell_win_max), int(sell_win_step))
+
+    combo_count = len(buy_th_values) * len(buy_win_values) * len(sell_th_values) * len(sell_win_values)
+    st.caption(f"Combinations to evaluate: {combo_count}")
+    if combo_count > 400:
+        st.warning("Large grid. Consider tightening ranges for faster results.")
+
+    run_grid = st.button("Run Grid Search", type="primary")
+    if run_grid:
+        with st.spinner("Evaluating parameter combinations..."):
+            grid_df = run_grid_search(
+                price_panel=price_panel,
+                initial_capital_by_ticker=initial_capital_by_ticker,
+                buy_threshold_values=buy_th_values,
+                buy_window_values=buy_win_values,
+                sell_threshold_values=sell_th_values,
+                sell_window_values=sell_win_values,
+                sell_mode=sell_mode,
+                fee_bps=float(fee_bps),
+                allow_reentry=allow_reentry,
+            )
+
+        if grid_df.empty:
+            st.warning("Grid search returned no results.")
+        else:
+            best = grid_df.iloc[0]
+            b1, b2, b3, b4 = st.columns(4)
+            with b1:
+                st.metric("Best Return %", f"{best['return_pct']:.2f}%")
+            with b2:
+                st.metric("Best Buy Lever", f"{best['buy_threshold_pct']:.2f}% / {int(best['buy_window_days'])}d")
+            with b3:
+                st.metric("Best Sell Lever", f"{best['sell_threshold_pct']:.2f}% / {int(best['sell_window_days'])}d")
+            with b4:
+                st.metric("Trades (best)", f"{int(best['trade_count'])}")
+
+            st.dataframe(grid_df.head(30), use_container_width=True)
