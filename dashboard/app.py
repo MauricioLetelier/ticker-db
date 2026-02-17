@@ -20,9 +20,10 @@
 #   If neither exists, it falls back to equal weights and shows a warning.
 
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from itertools import product
 from typing import Sequence, Literal, Tuple, Callable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import psycopg
@@ -746,6 +747,191 @@ def render_top_performer_block(title: str, lookback_days: int, tickers: Sequence
     st.plotly_chart(style_figure(fig), use_container_width=True)
 
 
+def day_window_utc(trade_day: date, tz_name: str) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(tz_name)
+    local_start = datetime.combine(trade_day, datetime.min.time(), tzinfo=tz)
+    local_end = local_start + timedelta(days=1)
+    return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
+
+
+def fetch_intraday_top_performers(
+    tickers: Sequence[str],
+    day_start_utc: datetime,
+    day_end_utc: datetime,
+    top_n: int,
+) -> pd.DataFrame:
+    sql = """
+    WITH day_px AS (
+      SELECT
+        p.ticker,
+        p.ts,
+        p.close::float AS close,
+        COALESCE(p.volume, 0)::float AS volume
+      FROM prices_1m p
+      WHERE p.ticker = ANY(%s)
+        AND p.ts >= %s
+        AND p.ts < %s
+        AND p.close IS NOT NULL
+    ),
+    first_px AS (
+      SELECT DISTINCT ON (ticker)
+        ticker,
+        ts AS first_ts,
+        close AS first_close
+      FROM day_px
+      ORDER BY ticker, ts ASC
+    ),
+    last_px AS (
+      SELECT DISTINCT ON (ticker)
+        ticker,
+        ts AS last_ts,
+        close AS last_close
+      FROM day_px
+      ORDER BY ticker, ts DESC
+    ),
+    agg AS (
+      SELECT
+        ticker,
+        COUNT(*) AS bars,
+        SUM(volume)::float AS volume_sum
+      FROM day_px
+      GROUP BY ticker
+    )
+    SELECT
+      l.ticker,
+      f.first_ts,
+      l.last_ts,
+      f.first_close,
+      l.last_close,
+      CASE
+        WHEN f.first_close IS NULL OR f.first_close = 0 THEN NULL
+        ELSE ((l.last_close / f.first_close) - 1.0) * 100.0
+      END AS return_pct,
+      (l.last_close - f.first_close) AS change_abs,
+      a.bars,
+      a.volume_sum
+    FROM first_px f
+    JOIN last_px l USING (ticker)
+    JOIN agg a USING (ticker)
+    WHERE f.first_close IS NOT NULL
+    ORDER BY return_pct DESC NULLS LAST, l.ticker
+    LIMIT %s;
+    """
+    return qdf(sql, (list(tickers), day_start_utc, day_end_utc, top_n))
+
+
+def fetch_intraday_normalized_series(
+    tickers: Sequence[str],
+    day_start_utc: datetime,
+    day_end_utc: datetime,
+) -> pd.DataFrame:
+    sql = """
+    SELECT
+      p.ticker,
+      p.ts,
+      p.close::float AS close
+    FROM prices_1m p
+    WHERE p.ticker = ANY(%s)
+      AND p.ts >= %s
+      AND p.ts < %s
+      AND p.close IS NOT NULL
+    ORDER BY p.ticker, p.ts;
+    """
+    out = qdf(sql, (list(tickers), day_start_utc, day_end_utc))
+    if out.empty:
+        return out
+
+    out["ts"] = pd.to_datetime(out["ts"], utc=True)
+    out = out.sort_values(["ticker", "ts"]).reset_index(drop=True)
+    out["base_close"] = out.groupby("ticker")["close"].transform("first")
+    out["norm_close"] = out["close"] / out["base_close"]
+    out.loc[(out["base_close"].isna()) | (out["base_close"] == 0), "norm_close"] = pd.NA
+    return out[["ticker", "ts", "close", "norm_close"]]
+
+
+def render_intraday_performer_page() -> None:
+    _, _, universe_tickers = render_classification_filters("intraday")
+    st.caption("Intraday rankings use only minute data from `prices_1m`.")
+
+    if not universe_tickers:
+        st.info("No tickers available for this filter selection.")
+        st.stop()
+
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        tz_name = st.selectbox(
+            "Trading timezone",
+            ["America/New_York", "UTC", "America/Los_Angeles"],
+            index=0,
+            key="intraday_tz",
+        )
+    default_trade_day = datetime.now(ZoneInfo(tz_name)).date()
+    with t2:
+        trade_day = st.date_input("Trading day", value=default_trade_day, key="intraday_trade_day")
+    with t3:
+        top_n = st.slider("Top N", min_value=3, max_value=30, value=5, step=1, key="intraday_top_n")
+
+    day_start_utc, day_end_utc = day_window_utc(trade_day, tz_name)
+    rank_df = fetch_intraday_top_performers(universe_tickers, day_start_utc, day_end_utc, top_n)
+    if rank_df.empty:
+        st.warning(
+            "No minute-level data found for this window. "
+            "Run the intraday updater and confirm `prices_1m` has rows for this day."
+        )
+        return
+
+    rank_df["first_ts"] = pd.to_datetime(rank_df["first_ts"], utc=True).dt.tz_convert(tz_name)
+    rank_df["last_ts"] = pd.to_datetime(rank_df["last_ts"], utc=True).dt.tz_convert(tz_name)
+    leader = rank_df.iloc[0]
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Leader", leader["ticker"], f"{leader['return_pct']:.2f}%")
+    with m2:
+        st.metric("Avg Return", f"{rank_df['return_pct'].mean():.2f}%")
+    with m3:
+        st.metric("Constituents", f"{len(rank_df)}")
+    with m4:
+        latest_print = rank_df["last_ts"].max()
+        st.metric("Latest Print", latest_print.strftime("%H:%M"))
+
+    st.caption(
+        f"Session window ({tz_name}): {trade_day.isoformat()} 00:00 -> "
+        f"{(trade_day + timedelta(days=1)).isoformat()} 00:00"
+    )
+    st.dataframe(rank_df, use_container_width=True)
+
+    bar_df = rank_df.sort_values("return_pct", ascending=True).copy()
+    bar_fig = px.bar(
+        bar_df,
+        x="return_pct",
+        y="ticker",
+        orientation="h",
+        title=f"Intraday return ranking ({trade_day.isoformat()})",
+        labels={"return_pct": "Return %", "ticker": ""},
+        color="return_pct",
+        color_continuous_scale=["#86c5da", "#1b6ca8", "#f18f01"],
+    )
+    bar_fig.update_layout(coloraxis_showscale=False)
+    st.plotly_chart(style_figure(bar_fig), use_container_width=True)
+
+    top_tickers = rank_df["ticker"].tolist()
+    intraday_df = fetch_intraday_normalized_series(top_tickers, day_start_utc, day_end_utc)
+    if intraday_df.empty:
+        st.warning("No minute series found for ranked tickers in this window.")
+        return
+
+    intraday_df["ts_local"] = pd.to_datetime(intraday_df["ts"], utc=True).dt.tz_convert(tz_name)
+    intraday_fig = px.line(
+        intraday_df,
+        x="ts_local",
+        y="norm_close",
+        color="ticker",
+        title=f"Top {top_n} intraday normalized performance ({trade_day.isoformat()})",
+    )
+    st.plotly_chart(style_figure(intraday_fig), use_container_width=True)
+
+
 def fetch_close_panel(tickers: Sequence[str], start_dt, end_dt) -> pd.DataFrame:
     sql = """
     SELECT
@@ -1096,7 +1282,11 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-page = st.sidebar.radio("Page", ["Explorer", "Top Performers", "Strategy Simulator"], index=0)
+page = st.sidebar.radio(
+    "Page",
+    ["Explorer", "Top Performers", "Intraday Performers", "Strategy Simulator"],
+    index=0,
+)
 
 if page == "Explorer":
     _, _, tickers = render_classification_filters("explorer")
@@ -1223,6 +1413,8 @@ elif page == "Top Performers":
         render_top_performer_block("Top performers - last 7 days", 7, universe_tickers, top_n)
     with d2:
         render_top_performer_block("Top performers - last 30 days", 30, universe_tickers, top_n)
+elif page == "Intraday Performers":
+    render_intraday_performer_page()
 else:
     _, _, sim_universe = render_classification_filters("sim")
     st.caption(
