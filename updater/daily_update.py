@@ -2,7 +2,7 @@ import os
 import logging
 import sys
 from datetime import date, datetime, timedelta, timezone
-from time import monotonic
+from time import monotonic, sleep
 
 import pandas as pd
 import psycopg
@@ -227,6 +227,79 @@ def get_global_latest_1d_dt(conn: psycopg.Connection, tickers: list[str]) -> dat
     return None if not row or row[0] is None else row[0]
 
 
+def download_ohlcv(
+    ticker: str,
+    *,
+    interval: str,
+    start: str | None = None,
+    period: str | None = None,
+    timeout_s: int = 25,
+    retries: int = 2,
+    retry_backoff_s: float = 2.0,
+) -> pd.DataFrame:
+    if start is None and period is None:
+        raise ValueError("Either start or period must be provided.")
+
+    kwargs = {
+        "tickers": ticker,
+        "interval": interval,
+        "auto_adjust": False,
+        "progress": False,
+        "threads": False,
+        "timeout": max(5, int(timeout_s)),
+    }
+    if start is not None:
+        kwargs["start"] = start
+    if period is not None:
+        kwargs["period"] = period
+
+    max_attempts = max(1, int(retries) + 1)
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        started = monotonic()
+        try:
+            df = yf.download(**kwargs)
+            elapsed = monotonic() - started
+            rows = 0 if df is None else len(df)
+            LOGGER.info(
+                "yf.download ticker=%s interval=%s attempt=%s/%s rows=%s elapsed=%.1fs",
+                ticker,
+                interval,
+                attempt,
+                max_attempts,
+                rows,
+                elapsed,
+            )
+            return df
+        except Exception as exc:
+            elapsed = monotonic() - started
+            last_exc = exc
+            LOGGER.warning(
+                "yf.download failed ticker=%s interval=%s attempt=%s/%s elapsed=%.1fs err=%s",
+                ticker,
+                interval,
+                attempt,
+                max_attempts,
+                elapsed,
+                repr(exc),
+            )
+            if attempt < max_attempts:
+                wait_s = max(0.5, float(retry_backoff_s)) * attempt
+                LOGGER.info(
+                    "retrying ticker=%s interval=%s after %.1fs (%s retries left)",
+                    ticker,
+                    interval,
+                    wait_s,
+                    max_attempts - attempt,
+                )
+                sleep(wait_s)
+
+    raise RuntimeError(
+        f"yf.download exhausted retries ticker={ticker} interval={interval} attempts={max_attempts}"
+    ) from last_exc
+
+
 def cleanup_1m(conn: psycopg.Connection, keep_hours: int) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=keep_hours)
     with conn.cursor() as cur:
@@ -263,6 +336,9 @@ def main() -> int:
     intraday_truncate_before_load = bool(ucfg.get("intraday_truncate_before_load", True))
     intraday_truncate_lock_timeout_s = max(1, int(ucfg.get("intraday_truncate_lock_timeout_s", 15)))
     schema_ddl_lock_timeout_s = max(1, int(ucfg.get("schema_ddl_lock_timeout_s", 10)))
+    yfinance_timeout_s = max(5, int(ucfg.get("yfinance_timeout_s", 25)))
+    yfinance_retries = max(0, int(ucfg.get("yfinance_retries", 2)))
+    yfinance_retry_backoff_s = max(0.5, float(ucfg.get("yfinance_retry_backoff_s", 2.0)))
     daily_start_mode = str(ucfg.get("daily_start_mode", "from_db")).lower()
     daily_overlap_days = max(0, int(ucfg.get("daily_overlap_days", 3)))
     daily_bootstrap_lookback_days = max(1, int(ucfg.get("daily_bootstrap_lookback_days", lookback)))
@@ -280,12 +356,15 @@ def main() -> int:
     failed_tickers = []
 
     LOGGER.info(
-        "run start tickers=%s daily_start_mode=%s overlap_days=%s intraday_enabled=%s intraday_period=%s",
+        "run start tickers=%s daily_start_mode=%s overlap_days=%s intraday_enabled=%s intraday_period=%s "
+        "yf_timeout_s=%s yf_retries=%s",
         total_tickers,
         daily_start_mode,
         daily_overlap_days,
         intraday_enabled,
         intraday_period,
+        yfinance_timeout_s,
+        yfinance_retries,
     )
 
     LOGGER.info("opening db session")
@@ -344,7 +423,14 @@ def main() -> int:
                 pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
                 LOGGER.info("[%s/%s %.1f%%] ticker=%s start daily_start=%s", idx, total_tickers, pct, t, start_dt)
                 LOGGER.info("[%s/%s] ticker=%s downloading 1d", idx, total_tickers, t)
-                df1d = yf.download(t, start=start_dt, interval="1d", auto_adjust=False, progress=False)
+                df1d = download_ohlcv(
+                    t,
+                    interval="1d",
+                    start=start_dt,
+                    timeout_s=yfinance_timeout_s,
+                    retries=yfinance_retries,
+                    retry_backoff_s=yfinance_retry_backoff_s,
+                )
                 df1d = normalize_ohlcv(df1d, t)
                 upsert_1d(conn, t, df1d)
 
@@ -357,7 +443,14 @@ def main() -> int:
                         t,
                         intraday_period,
                     )
-                    df1m = yf.download(t, period=intraday_period, interval="1m", auto_adjust=False, progress=False)
+                    df1m = download_ohlcv(
+                        t,
+                        interval="1m",
+                        period=intraday_period,
+                        timeout_s=yfinance_timeout_s,
+                        retries=yfinance_retries,
+                        retry_backoff_s=yfinance_retry_backoff_s,
+                    )
                     df1m = normalize_ohlcv(df1m, t)
                     intraday_rows = 0 if df1m is None else len(df1m)
                     upsert_1m(conn, t, df1m)
