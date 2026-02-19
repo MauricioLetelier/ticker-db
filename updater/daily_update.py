@@ -28,11 +28,22 @@ def get_conn(cfg: dict) -> psycopg.Connection:
     db_pass = os.environ.get("DB_PASS")
     if not db_pass:
         raise RuntimeError("DB_PASS is required in the environment.")
+    connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT_SECS", "15"))
+    LOGGER.info(
+        "connecting to db host=%s port=%s db=%s user=%s timeout=%ss",
+        db["host"],
+        db["port"],
+        db["name"],
+        db["user"],
+        connect_timeout,
+    )
     conn_str = (
         f"host={db['host']} port={db['port']} dbname={db['name']} "
-        f"user={db['user']} password={db_pass}"
+        f"user={db['user']} password={db_pass} connect_timeout={connect_timeout}"
     )
-    return psycopg.connect(conn_str)
+    conn = psycopg.connect(conn_str)
+    LOGGER.info("db connection established")
+    return conn
 
 
 def ensure_tables(conn: psycopg.Connection) -> None:
@@ -206,8 +217,10 @@ def cleanup_1m(conn: psycopg.Connection, keep_hours: int) -> None:
         cur.execute("DELETE FROM prices_1m WHERE ts < %s;", (cutoff,))
 
 
-def truncate_1m(conn: psycopg.Connection) -> None:
+def truncate_1m(conn: psycopg.Connection, lock_timeout_s: int = 15) -> None:
     with conn.cursor() as cur:
+        safe_lock_timeout_s = max(1, int(lock_timeout_s))
+        cur.execute(f"SET LOCAL lock_timeout = '{safe_lock_timeout_s}s';")
         cur.execute("TRUNCATE TABLE prices_1m;")
 
 
@@ -232,6 +245,7 @@ def main() -> int:
     intraday_period = str(ucfg.get("intraday_period", "1d"))
     keep_1m = int(ucfg.get("keep_1m_hours", 30))
     intraday_truncate_before_load = bool(ucfg.get("intraday_truncate_before_load", True))
+    intraday_truncate_lock_timeout_s = max(1, int(ucfg.get("intraday_truncate_lock_timeout_s", 15)))
     daily_start_mode = str(ucfg.get("daily_start_mode", "from_db")).lower()
     daily_overlap_days = max(0, int(ucfg.get("daily_overlap_days", 3)))
     daily_bootstrap_lookback_days = max(1, int(ucfg.get("daily_bootstrap_lookback_days", lookback)))
@@ -257,18 +271,29 @@ def main() -> int:
         intraday_period,
     )
 
+    LOGGER.info("opening db session")
     with get_conn(cfg) as conn:
+        LOGGER.info("ensuring tables/indexes")
         ensure_tables(conn)
+        LOGGER.info("table/index ensure complete")
         latest_1d_map: dict[str, date] = {}
         latest_1d_global: date | None = None
         if daily_start_mode == "from_db":
+            LOGGER.info("loading per-ticker latest 1d dates in one query")
             latest_1d_map = get_latest_1d_dt_map(conn, tickers)
+            LOGGER.info("loaded latest 1d dates for %s/%s tickers", len(latest_1d_map), total_tickers)
         elif daily_start_mode == "from_db_global":
+            LOGGER.info("loading global latest 1d date for selected ticker set")
             latest_1d_global = get_global_latest_1d_dt(conn, tickers)
+            LOGGER.info("loaded global latest 1d date: %s", latest_1d_global)
 
         if intraday_enabled and intraday_truncate_before_load:
             try:
-                truncate_1m(conn)
+                LOGGER.info(
+                    "truncating prices_1m before intraday load (lock_timeout=%ss)",
+                    intraday_truncate_lock_timeout_s,
+                )
+                truncate_1m(conn, lock_timeout_s=intraday_truncate_lock_timeout_s)
                 conn.commit()
                 LOGGER.info("truncated prices_1m before intraday load")
             except Exception:
