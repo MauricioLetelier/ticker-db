@@ -236,8 +236,8 @@ def configure_db_session_timeouts(
     safe_lock = max(1, int(lock_timeout_s))
     safe_stmt = max(5, int(statement_timeout_s))
     with conn.cursor() as cur:
-        cur.execute("SET SESSION lock_timeout = %s;", (f"{safe_lock}s",))
-        cur.execute("SET SESSION statement_timeout = %s;", (f"{safe_stmt}s",))
+        cur.execute("SELECT set_config('lock_timeout', %s, false);", (f"{safe_lock}s",))
+        cur.execute("SELECT set_config('statement_timeout', %s, false);", (f"{safe_stmt}s",))
 
 
 def download_ohlcv(
