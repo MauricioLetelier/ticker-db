@@ -240,6 +240,18 @@ def configure_db_session_timeouts(
         cur.execute("SELECT set_config('statement_timeout', %s, false);", (f"{safe_stmt}s",))
 
 
+def try_acquire_updater_lock(conn: psycopg.Connection, lock_name: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(hashtext(%s));", (lock_name,))
+        row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def release_updater_lock(conn: psycopg.Connection, lock_name: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_unlock(hashtext(%s));", (lock_name,))
+
+
 def download_ohlcv(
     ticker: str,
     *,
@@ -351,6 +363,7 @@ def main() -> int:
     schema_ddl_lock_timeout_s = max(1, int(ucfg.get("schema_ddl_lock_timeout_s", 10)))
     db_lock_timeout_s = max(1, int(ucfg.get("db_lock_timeout_s", 15)))
     db_statement_timeout_s = max(5, int(ucfg.get("db_statement_timeout_s", 120)))
+    updater_lock_name = str(ucfg.get("updater_lock_name", "ticker-db:daily_update"))
     yfinance_timeout_s = max(5, int(ucfg.get("yfinance_timeout_s", 25)))
     yfinance_retries = max(0, int(ucfg.get("yfinance_retries", 2)))
     yfinance_retry_backoff_s = max(0.5, float(ucfg.get("yfinance_retry_backoff_s", 2.0)))
@@ -384,162 +397,178 @@ def main() -> int:
 
     LOGGER.info("opening db session")
     with get_conn(cfg) as conn:
-        configure_db_session_timeouts(
-            conn,
-            lock_timeout_s=db_lock_timeout_s,
-            statement_timeout_s=db_statement_timeout_s,
-        )
-        LOGGER.info(
-            "db session timeouts configured lock_timeout=%ss statement_timeout=%ss",
-            db_lock_timeout_s,
-            db_statement_timeout_s,
-        )
-        LOGGER.info("checking required tables")
-        if required_tables_exist(conn):
-            LOGGER.info("required tables exist; skipping DDL ensure")
-        else:
-            LOGGER.info("required tables missing; ensuring tables/indexes (ddl_lock_timeout=%ss)", schema_ddl_lock_timeout_s)
-            ensure_tables(conn, ddl_lock_timeout_s=schema_ddl_lock_timeout_s)
-            conn.commit()
-            LOGGER.info("table/index ensure complete")
-        latest_1d_map: dict[str, date] = {}
-        latest_1d_global: date | None = None
-        if daily_start_mode == "from_db":
-            LOGGER.info("loading per-ticker latest 1d dates in one query")
-            latest_1d_map = get_latest_1d_dt_map(conn, tickers)
-            LOGGER.info("loaded latest 1d dates for %s/%s tickers", len(latest_1d_map), total_tickers)
-        elif daily_start_mode == "from_db_global":
-            LOGGER.info("loading global latest 1d date for selected ticker set")
-            latest_1d_global = get_global_latest_1d_dt(conn, tickers)
-            LOGGER.info("loaded global latest 1d date: %s", latest_1d_global)
-
-        if intraday_enabled and intraday_truncate_before_load:
-            try:
-                LOGGER.info(
-                    "truncating prices_1m before intraday load (lock_timeout=%ss)",
-                    intraday_truncate_lock_timeout_s,
-                )
-                truncate_1m(conn, lock_timeout_s=intraday_truncate_lock_timeout_s)
-                conn.commit()
-                LOGGER.info("truncated prices_1m before intraday load")
-            except Exception:
-                conn.rollback()
-                LOGGER.exception("failed truncating prices_1m before intraday load")
+        lock_acquired = False
+        try:
+            LOGGER.info("acquiring updater advisory lock name=%s", updater_lock_name)
+            lock_acquired = try_acquire_updater_lock(conn, updater_lock_name)
+            if not lock_acquired:
+                LOGGER.error("another updater instance holds lock name=%s; aborting", updater_lock_name)
                 return 1
+            LOGGER.info("updater advisory lock acquired")
 
-        for idx, t in enumerate(tickers, start=1):
-            ticker_started = monotonic()
-            try:
-                if daily_start_mode == "from_db":
-                    latest_dt = latest_1d_map.get(t)
-                    if latest_dt is None:
-                        start_day = fallback_start_bootstrap
-                    else:
-                        start_day = latest_dt - timedelta(days=daily_overlap_days)
-                elif daily_start_mode == "from_db_global":
-                    if latest_1d_global is None:
-                        start_day = fallback_start_bootstrap
-                    else:
-                        start_day = latest_1d_global - timedelta(days=daily_overlap_days)
-                else:
-                    start_day = fallback_start_fixed
+            configure_db_session_timeouts(
+                conn,
+                lock_timeout_s=db_lock_timeout_s,
+                statement_timeout_s=db_statement_timeout_s,
+            )
+            LOGGER.info(
+                "db session timeouts configured lock_timeout=%ss statement_timeout=%ss",
+                db_lock_timeout_s,
+                db_statement_timeout_s,
+            )
+            LOGGER.info("checking required tables")
+            if required_tables_exist(conn):
+                LOGGER.info("required tables exist; skipping DDL ensure")
+            else:
+                LOGGER.info("required tables missing; ensuring tables/indexes (ddl_lock_timeout=%ss)", schema_ddl_lock_timeout_s)
+                ensure_tables(conn, ddl_lock_timeout_s=schema_ddl_lock_timeout_s)
+                conn.commit()
+                LOGGER.info("table/index ensure complete")
+            latest_1d_map: dict[str, date] = {}
+            latest_1d_global: date | None = None
+            if daily_start_mode == "from_db":
+                LOGGER.info("loading per-ticker latest 1d dates in one query")
+                latest_1d_map = get_latest_1d_dt_map(conn, tickers)
+                LOGGER.info("loaded latest 1d dates for %s/%s tickers", len(latest_1d_map), total_tickers)
+            elif daily_start_mode == "from_db_global":
+                LOGGER.info("loading global latest 1d date for selected ticker set")
+                latest_1d_global = get_global_latest_1d_dt(conn, tickers)
+                LOGGER.info("loaded global latest 1d date: %s", latest_1d_global)
 
-                start_dt = start_day.isoformat()
-                pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
-                LOGGER.info("[%s/%s %.1f%%] ticker=%s start daily_start=%s", idx, total_tickers, pct, t, start_dt)
-                LOGGER.info("[%s/%s] ticker=%s downloading 1d", idx, total_tickers, t)
-                df1d = download_ohlcv(
-                    t,
-                    interval="1d",
-                    start=start_dt,
-                    timeout_s=yfinance_timeout_s,
-                    retries=yfinance_retries,
-                    retry_backoff_s=yfinance_retry_backoff_s,
-                )
-                df1d = normalize_ohlcv(df1d, t)
-                LOGGER.info(
-                    "[%s/%s] ticker=%s upserting 1d rows=%s",
-                    idx,
-                    total_tickers,
-                    t,
-                    0 if df1d is None else len(df1d),
-                )
-                upsert_1d(conn, t, df1d)
-
-                intraday_rows = 0
-                if intraday_enabled:
+            if intraday_enabled and intraday_truncate_before_load:
+                try:
                     LOGGER.info(
-                        "[%s/%s] ticker=%s downloading 1m period=%s",
-                        idx,
-                        total_tickers,
-                        t,
-                        intraday_period,
+                        "truncating prices_1m before intraday load (lock_timeout=%ss)",
+                        intraday_truncate_lock_timeout_s,
                     )
-                    df1m = download_ohlcv(
+                    truncate_1m(conn, lock_timeout_s=intraday_truncate_lock_timeout_s)
+                    conn.commit()
+                    LOGGER.info("truncated prices_1m before intraday load")
+                except Exception:
+                    conn.rollback()
+                    LOGGER.exception("failed truncating prices_1m before intraday load")
+                    return 1
+
+            for idx, t in enumerate(tickers, start=1):
+                ticker_started = monotonic()
+                try:
+                    if daily_start_mode == "from_db":
+                        latest_dt = latest_1d_map.get(t)
+                        if latest_dt is None:
+                            start_day = fallback_start_bootstrap
+                        else:
+                            start_day = latest_dt - timedelta(days=daily_overlap_days)
+                    elif daily_start_mode == "from_db_global":
+                        if latest_1d_global is None:
+                            start_day = fallback_start_bootstrap
+                        else:
+                            start_day = latest_1d_global - timedelta(days=daily_overlap_days)
+                    else:
+                        start_day = fallback_start_fixed
+
+                    start_dt = start_day.isoformat()
+                    pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
+                    LOGGER.info("[%s/%s %.1f%%] ticker=%s start daily_start=%s", idx, total_tickers, pct, t, start_dt)
+                    LOGGER.info("[%s/%s] ticker=%s downloading 1d", idx, total_tickers, t)
+                    df1d = download_ohlcv(
                         t,
-                        interval="1m",
-                        period=intraday_period,
+                        interval="1d",
+                        start=start_dt,
                         timeout_s=yfinance_timeout_s,
                         retries=yfinance_retries,
                         retry_backoff_s=yfinance_retry_backoff_s,
                     )
-                    df1m = normalize_ohlcv(df1m, t)
-                    intraday_rows = 0 if df1m is None else len(df1m)
+                    df1d = normalize_ohlcv(df1d, t)
                     LOGGER.info(
-                        "[%s/%s] ticker=%s upserting 1m rows=%s",
+                        "[%s/%s] ticker=%s upserting 1d rows=%s",
                         idx,
                         total_tickers,
                         t,
-                        intraday_rows,
+                        0 if df1d is None else len(df1d),
                     )
-                    upsert_1m(conn, t, df1m)
+                    upsert_1d(conn, t, df1d)
 
-                LOGGER.info("[%s/%s] ticker=%s committing transaction", idx, total_tickers, t)
-                conn.commit()
-                success_count += 1
-                ticker_elapsed = monotonic() - ticker_started
-                run_elapsed = monotonic() - run_started
-                avg_per_ticker = run_elapsed / idx if idx > 0 else 0.0
-                eta_seconds = avg_per_ticker * (total_tickers - idx)
-                LOGGER.info(
-                    "[%s/%s %.1f%%] ticker=%s done daily_start=%s daily_rows=%s intraday_rows=%s "
-                    "ticker_elapsed=%.1fs run_elapsed=%.1fs eta=%.1fs",
-                    idx,
-                    total_tickers,
-                    pct,
-                    t,
-                    start_dt,
-                    0 if df1d is None else len(df1d),
-                    intraday_rows,
-                    ticker_elapsed,
-                    run_elapsed,
-                    eta_seconds,
-                )
-            except Exception:
-                conn.rollback()
-                failed_tickers.append(t)
-                ticker_elapsed = monotonic() - ticker_started
-                run_elapsed = monotonic() - run_started
-                pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
-                LOGGER.error(
-                    "[%s/%s %.1f%%] ticker=%s failed ticker_elapsed=%.1fs run_elapsed=%.1fs",
-                    idx,
-                    total_tickers,
-                    pct,
-                    t,
-                    ticker_elapsed,
-                    run_elapsed,
-                )
-                LOGGER.exception("failed updating ticker=%s", t)
+                    intraday_rows = 0
+                    if intraday_enabled:
+                        LOGGER.info(
+                            "[%s/%s] ticker=%s downloading 1m period=%s",
+                            idx,
+                            total_tickers,
+                            t,
+                            intraday_period,
+                        )
+                        df1m = download_ohlcv(
+                            t,
+                            interval="1m",
+                            period=intraday_period,
+                            timeout_s=yfinance_timeout_s,
+                            retries=yfinance_retries,
+                            retry_backoff_s=yfinance_retry_backoff_s,
+                        )
+                        df1m = normalize_ohlcv(df1m, t)
+                        intraday_rows = 0 if df1m is None else len(df1m)
+                        LOGGER.info(
+                            "[%s/%s] ticker=%s upserting 1m rows=%s",
+                            idx,
+                            total_tickers,
+                            t,
+                            intraday_rows,
+                        )
+                        upsert_1m(conn, t, df1m)
 
-        if intraday_enabled and not intraday_truncate_before_load:
-            try:
-                cleanup_1m(conn, keep_1m)
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                LOGGER.exception("failed intraday cleanup")
-                return 1
+                    LOGGER.info("[%s/%s] ticker=%s committing transaction", idx, total_tickers, t)
+                    conn.commit()
+                    success_count += 1
+                    ticker_elapsed = monotonic() - ticker_started
+                    run_elapsed = monotonic() - run_started
+                    avg_per_ticker = run_elapsed / idx if idx > 0 else 0.0
+                    eta_seconds = avg_per_ticker * (total_tickers - idx)
+                    LOGGER.info(
+                        "[%s/%s %.1f%%] ticker=%s done daily_start=%s daily_rows=%s intraday_rows=%s "
+                        "ticker_elapsed=%.1fs run_elapsed=%.1fs eta=%.1fs",
+                        idx,
+                        total_tickers,
+                        pct,
+                        t,
+                        start_dt,
+                        0 if df1d is None else len(df1d),
+                        intraday_rows,
+                        ticker_elapsed,
+                        run_elapsed,
+                        eta_seconds,
+                    )
+                except Exception:
+                    conn.rollback()
+                    failed_tickers.append(t)
+                    ticker_elapsed = monotonic() - ticker_started
+                    run_elapsed = monotonic() - run_started
+                    pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
+                    LOGGER.error(
+                        "[%s/%s %.1f%%] ticker=%s failed ticker_elapsed=%.1fs run_elapsed=%.1fs",
+                        idx,
+                        total_tickers,
+                        pct,
+                        t,
+                        ticker_elapsed,
+                        run_elapsed,
+                    )
+                    LOGGER.exception("failed updating ticker=%s", t)
+
+            if intraday_enabled and not intraday_truncate_before_load:
+                try:
+                    cleanup_1m(conn, keep_1m)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    LOGGER.exception("failed intraday cleanup")
+                    return 1
+        finally:
+            if lock_acquired:
+                try:
+                    release_updater_lock(conn, updater_lock_name)
+                    LOGGER.info("updater advisory lock released")
+                except Exception:
+                    LOGGER.exception("failed releasing updater advisory lock")
 
     LOGGER.info(
         "run complete total=%s success=%s failed=%s total_elapsed=%.1fs",
