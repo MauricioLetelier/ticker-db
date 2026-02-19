@@ -2,6 +2,7 @@ import os
 import logging
 import sys
 from datetime import date, datetime, timedelta, timezone
+from time import monotonic
 
 import pandas as pd
 import psycopg
@@ -242,8 +243,19 @@ def main() -> int:
     today_utc = datetime.now(timezone.utc).date()
     fallback_start_fixed = today_utc - timedelta(days=lookback)
     fallback_start_bootstrap = today_utc - timedelta(days=daily_bootstrap_lookback_days)
+    total_tickers = len(tickers)
+    run_started = monotonic()
     success_count = 0
     failed_tickers = []
+
+    LOGGER.info(
+        "run start tickers=%s daily_start_mode=%s overlap_days=%s intraday_enabled=%s intraday_period=%s",
+        total_tickers,
+        daily_start_mode,
+        daily_overlap_days,
+        intraday_enabled,
+        intraday_period,
+    )
 
     with get_conn(cfg) as conn:
         ensure_tables(conn)
@@ -264,7 +276,8 @@ def main() -> int:
                 LOGGER.exception("failed truncating prices_1m before intraday load")
                 return 1
 
-        for t in tickers:
+        for idx, t in enumerate(tickers, start=1):
+            ticker_started = monotonic()
             try:
                 if daily_start_mode == "from_db":
                     latest_dt = latest_1d_map.get(t)
@@ -281,12 +294,22 @@ def main() -> int:
                     start_day = fallback_start_fixed
 
                 start_dt = start_day.isoformat()
+                pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
+                LOGGER.info("[%s/%s %.1f%%] ticker=%s start daily_start=%s", idx, total_tickers, pct, t, start_dt)
+                LOGGER.info("[%s/%s] ticker=%s downloading 1d", idx, total_tickers, t)
                 df1d = yf.download(t, start=start_dt, interval="1d", auto_adjust=False, progress=False)
                 df1d = normalize_ohlcv(df1d, t)
                 upsert_1d(conn, t, df1d)
 
                 intraday_rows = 0
                 if intraday_enabled:
+                    LOGGER.info(
+                        "[%s/%s] ticker=%s downloading 1m period=%s",
+                        idx,
+                        total_tickers,
+                        t,
+                        intraday_period,
+                    )
                     df1m = yf.download(t, period=intraday_period, interval="1m", auto_adjust=False, progress=False)
                     df1m = normalize_ohlcv(df1m, t)
                     intraday_rows = 0 if df1m is None else len(df1m)
@@ -294,16 +317,39 @@ def main() -> int:
 
                 conn.commit()
                 success_count += 1
+                ticker_elapsed = monotonic() - ticker_started
+                run_elapsed = monotonic() - run_started
+                avg_per_ticker = run_elapsed / idx if idx > 0 else 0.0
+                eta_seconds = avg_per_ticker * (total_tickers - idx)
                 LOGGER.info(
-                    "updated ticker=%s daily_start=%s daily_rows=%s intraday_rows=%s",
+                    "[%s/%s %.1f%%] ticker=%s done daily_start=%s daily_rows=%s intraday_rows=%s "
+                    "ticker_elapsed=%.1fs run_elapsed=%.1fs eta=%.1fs",
+                    idx,
+                    total_tickers,
+                    pct,
                     t,
                     start_dt,
                     0 if df1d is None else len(df1d),
                     intraday_rows,
+                    ticker_elapsed,
+                    run_elapsed,
+                    eta_seconds,
                 )
             except Exception:
                 conn.rollback()
                 failed_tickers.append(t)
+                ticker_elapsed = monotonic() - ticker_started
+                run_elapsed = monotonic() - run_started
+                pct = (idx / total_tickers) * 100.0 if total_tickers > 0 else 100.0
+                LOGGER.error(
+                    "[%s/%s %.1f%%] ticker=%s failed ticker_elapsed=%.1fs run_elapsed=%.1fs",
+                    idx,
+                    total_tickers,
+                    pct,
+                    t,
+                    ticker_elapsed,
+                    run_elapsed,
+                )
                 LOGGER.exception("failed updating ticker=%s", t)
 
         if intraday_enabled and not intraday_truncate_before_load:
@@ -316,10 +362,11 @@ def main() -> int:
                 return 1
 
     LOGGER.info(
-        "run complete total=%s success=%s failed=%s",
+        "run complete total=%s success=%s failed=%s total_elapsed=%.1fs",
         len(tickers),
         success_count,
         len(failed_tickers),
+        monotonic() - run_started,
     )
     if failed_tickers:
         LOGGER.warning("failed tickers: %s", ",".join(failed_tickers))
