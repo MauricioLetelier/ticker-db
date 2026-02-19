@@ -46,8 +46,11 @@ def get_conn(cfg: dict) -> psycopg.Connection:
     return conn
 
 
-def ensure_tables(conn: psycopg.Connection) -> None:
+def ensure_tables(conn: psycopg.Connection, ddl_lock_timeout_s: int = 10) -> None:
     with conn.cursor() as cur:
+        safe_timeout = max(1, int(ddl_lock_timeout_s))
+        cur.execute(f"SET LOCAL lock_timeout = '{safe_timeout}s';")
+        cur.execute(f"SET LOCAL statement_timeout = '{max(5, safe_timeout * 2)}s';")
         cur.execute("""
         CREATE TABLE IF NOT EXISTS prices_1d (
           ticker text NOT NULL,
@@ -74,6 +77,19 @@ def ensure_tables(conn: psycopg.Connection) -> None:
         );
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS prices_1m_ts_idx ON prices_1m (ts);")
+
+
+def required_tables_exist(conn: psycopg.Connection) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              to_regclass('public.prices_1d') IS NOT NULL AS has_1d,
+              to_regclass('public.prices_1m') IS NOT NULL AS has_1m;
+            """
+        )
+        row = cur.fetchone()
+    return bool(row and row[0] and row[1])
 
 
 def normalize_ohlcv(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -246,6 +262,7 @@ def main() -> int:
     keep_1m = int(ucfg.get("keep_1m_hours", 30))
     intraday_truncate_before_load = bool(ucfg.get("intraday_truncate_before_load", True))
     intraday_truncate_lock_timeout_s = max(1, int(ucfg.get("intraday_truncate_lock_timeout_s", 15)))
+    schema_ddl_lock_timeout_s = max(1, int(ucfg.get("schema_ddl_lock_timeout_s", 10)))
     daily_start_mode = str(ucfg.get("daily_start_mode", "from_db")).lower()
     daily_overlap_days = max(0, int(ucfg.get("daily_overlap_days", 3)))
     daily_bootstrap_lookback_days = max(1, int(ucfg.get("daily_bootstrap_lookback_days", lookback)))
@@ -273,9 +290,14 @@ def main() -> int:
 
     LOGGER.info("opening db session")
     with get_conn(cfg) as conn:
-        LOGGER.info("ensuring tables/indexes")
-        ensure_tables(conn)
-        LOGGER.info("table/index ensure complete")
+        LOGGER.info("checking required tables")
+        if required_tables_exist(conn):
+            LOGGER.info("required tables exist; skipping DDL ensure")
+        else:
+            LOGGER.info("required tables missing; ensuring tables/indexes (ddl_lock_timeout=%ss)", schema_ddl_lock_timeout_s)
+            ensure_tables(conn, ddl_lock_timeout_s=schema_ddl_lock_timeout_s)
+            conn.commit()
+            LOGGER.info("table/index ensure complete")
         latest_1d_map: dict[str, date] = {}
         latest_1d_global: date | None = None
         if daily_start_mode == "from_db":

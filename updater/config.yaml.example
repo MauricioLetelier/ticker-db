@@ -20,7 +20,11 @@ update:
   daily_bootstrap_lookback_days: 3650
   daily_lookback_days: 14
   intraday_enabled: true
+  # DDL lock timeout only used when prices_1d/prices_1m are missing and setup is required.
+  schema_ddl_lock_timeout_s: 10
   intraday_truncate_before_load: true
+  # Lock timeout for TRUNCATE prices_1m when intraday_truncate_before_load=true.
+  intraday_truncate_lock_timeout_s: 15
   intraday_period: "1d"
   keep_1m_hours: 30
 
