@@ -227,6 +227,19 @@ def get_global_latest_1d_dt(conn: psycopg.Connection, tickers: list[str]) -> dat
     return None if not row or row[0] is None else row[0]
 
 
+def configure_db_session_timeouts(
+    conn: psycopg.Connection,
+    *,
+    lock_timeout_s: int,
+    statement_timeout_s: int,
+) -> None:
+    safe_lock = max(1, int(lock_timeout_s))
+    safe_stmt = max(5, int(statement_timeout_s))
+    with conn.cursor() as cur:
+        cur.execute("SET SESSION lock_timeout = %s;", (f"{safe_lock}s",))
+        cur.execute("SET SESSION statement_timeout = %s;", (f"{safe_stmt}s",))
+
+
 def download_ohlcv(
     ticker: str,
     *,
@@ -336,6 +349,8 @@ def main() -> int:
     intraday_truncate_before_load = bool(ucfg.get("intraday_truncate_before_load", True))
     intraday_truncate_lock_timeout_s = max(1, int(ucfg.get("intraday_truncate_lock_timeout_s", 15)))
     schema_ddl_lock_timeout_s = max(1, int(ucfg.get("schema_ddl_lock_timeout_s", 10)))
+    db_lock_timeout_s = max(1, int(ucfg.get("db_lock_timeout_s", 15)))
+    db_statement_timeout_s = max(5, int(ucfg.get("db_statement_timeout_s", 120)))
     yfinance_timeout_s = max(5, int(ucfg.get("yfinance_timeout_s", 25)))
     yfinance_retries = max(0, int(ucfg.get("yfinance_retries", 2)))
     yfinance_retry_backoff_s = max(0.5, float(ucfg.get("yfinance_retry_backoff_s", 2.0)))
@@ -369,6 +384,16 @@ def main() -> int:
 
     LOGGER.info("opening db session")
     with get_conn(cfg) as conn:
+        configure_db_session_timeouts(
+            conn,
+            lock_timeout_s=db_lock_timeout_s,
+            statement_timeout_s=db_statement_timeout_s,
+        )
+        LOGGER.info(
+            "db session timeouts configured lock_timeout=%ss statement_timeout=%ss",
+            db_lock_timeout_s,
+            db_statement_timeout_s,
+        )
         LOGGER.info("checking required tables")
         if required_tables_exist(conn):
             LOGGER.info("required tables exist; skipping DDL ensure")
@@ -432,6 +457,13 @@ def main() -> int:
                     retry_backoff_s=yfinance_retry_backoff_s,
                 )
                 df1d = normalize_ohlcv(df1d, t)
+                LOGGER.info(
+                    "[%s/%s] ticker=%s upserting 1d rows=%s",
+                    idx,
+                    total_tickers,
+                    t,
+                    0 if df1d is None else len(df1d),
+                )
                 upsert_1d(conn, t, df1d)
 
                 intraday_rows = 0
@@ -453,8 +485,16 @@ def main() -> int:
                     )
                     df1m = normalize_ohlcv(df1m, t)
                     intraday_rows = 0 if df1m is None else len(df1m)
+                    LOGGER.info(
+                        "[%s/%s] ticker=%s upserting 1m rows=%s",
+                        idx,
+                        total_tickers,
+                        t,
+                        intraday_rows,
+                    )
                     upsert_1m(conn, t, df1m)
 
+                LOGGER.info("[%s/%s] ticker=%s committing transaction", idx, total_tickers, t)
                 conn.commit()
                 success_count += 1
                 ticker_elapsed = monotonic() - ticker_started

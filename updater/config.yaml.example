@@ -27,6 +27,9 @@ update:
   intraday_truncate_lock_timeout_s: 15
   intraday_period: "1d"
   keep_1m_hours: 30
+  # Session-level DB safety timeouts for DML during updates.
+  db_lock_timeout_s: 15
+  db_statement_timeout_s: 120
   # yfinance request controls (applies to both 1d and 1m downloads)
   yfinance_timeout_s: 25
   yfinance_retries: 2
