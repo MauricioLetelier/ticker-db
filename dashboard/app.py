@@ -21,11 +21,13 @@
 
 import os
 import math
+import re
 from datetime import date, datetime, timedelta, timezone
 from itertools import product
 from typing import Sequence, Literal, Tuple, Callable
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import psycopg
 import streamlit as st
@@ -413,11 +415,24 @@ def _extract_numeric_values(values) -> list[float]:
 def _looks_datetime_like(values) -> bool:
     if values is None:
         return False
+    seen = 0
     for v in values:
         if v is None or pd.isna(v):
             continue
-        if isinstance(v, (datetime, date, pd.Timestamp)):
+        if isinstance(v, (datetime, date, pd.Timestamp, np.datetime64)):
             return True
+        if isinstance(v, str):
+            text = v.strip()
+            if text and (
+                re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", text)
+                or re.search(r"[A-Za-z]{3,}", text)
+            ):
+                ts = pd.to_datetime(text, errors="coerce")
+                if not pd.isna(ts):
+                    return True
+        seen += 1
+        if seen >= 20:
+            break
     return False
 
 
@@ -459,6 +474,17 @@ def _format_datetime_as_ordinal_labels(values) -> tuple[list[str | None], list[s
             seen.add(label)
             order.append(label)
     return labels, order
+
+
+def _sparse_category_tickvals(labels: Sequence[str], max_labels: int = 10) -> list[str]:
+    unique_labels = [lbl for lbl in labels if lbl]
+    if len(unique_labels) <= max_labels:
+        return unique_labels
+    step = max(1, math.ceil(len(unique_labels) / max_labels))
+    out = [unique_labels[i] for i in range(0, len(unique_labels), step)]
+    if unique_labels[-1] not in out:
+        out.append(unique_labels[-1])
+    return out
 
 
 def _nice_tick_step(vmin: float, vmax: float) -> float | None:
@@ -558,11 +584,14 @@ def style_figure(fig, title: str | None = None):
     )
 
     if has_datetime_x and category_order:
+        tickvals = _sparse_category_tickvals(category_order, max_labels=9)
         fig.update_xaxes(
             type="category",
             categoryorder="array",
             categoryarray=category_order,
-            tickmode="auto",
+            tickmode="array",
+            tickvals=tickvals,
+            ticktext=tickvals,
         )
 
     # Dynamic numeric tick references: roughly (max-min)/10 with rounded clean steps.
