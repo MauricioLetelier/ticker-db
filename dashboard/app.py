@@ -43,14 +43,19 @@ DB_PASS = os.getenv("DB_PASS", "")
 
 WeightMethod = Literal["equal", "market_cap"]
 CHART_COLORS = [
-    "#0f62fe",
-    "#0f766e",
-    "#1f2937",
-    "#b45309",
-    "#dc2626",
-    "#0891b2",
-    "#65a30d",
-    "#334155",
+    "#355B8E",
+    "#4C6A92",
+    "#617FA5",
+    "#7895B7",
+    "#8FA9C6",
+    "#53657E",
+    "#6C7C92",
+    "#8794A6",
+]
+RETURN_BAR_SCALE = [
+    [0.0, "#AD6B74"],
+    [0.5, "#DCE4F0"],
+    [1.0, "#355B8E"],
 ]
 
 
@@ -927,7 +932,8 @@ def render_top_performer_block(title: str, lookback_days: int, tickers: Sequence
         title=f"Ranked returns ({lookback_days}d)",
         labels={"return_pct": "Return %", "ticker": ""},
         color="return_pct",
-        color_continuous_scale=["#86c5da", "#1b6ca8", "#f18f01"],
+        color_continuous_scale=RETURN_BAR_SCALE,
+        color_continuous_midpoint=0.0,
     )
     bar_fig.update_layout(coloraxis_showscale=False)
     st.plotly_chart(style_figure(bar_fig), use_container_width=True)
@@ -1112,7 +1118,8 @@ def render_intraday_performer_page() -> None:
         title=f"Intraday return ranking ({trade_day.isoformat()})",
         labels={"return_pct": "Return %", "ticker": ""},
         color="return_pct",
-        color_continuous_scale=["#86c5da", "#1b6ca8", "#f18f01"],
+        color_continuous_scale=RETURN_BAR_SCALE,
+        color_continuous_midpoint=0.0,
     )
     bar_fig.update_layout(coloraxis_showscale=False)
     st.plotly_chart(style_figure(bar_fig), use_container_width=True)
