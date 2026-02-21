@@ -43,14 +43,14 @@ DB_PASS = os.getenv("DB_PASS", "")
 
 WeightMethod = Literal["equal", "market_cap"]
 CHART_COLORS = [
-    "#2563eb",
+    "#0f62fe",
     "#0f766e",
+    "#1f2937",
     "#b45309",
     "#dc2626",
-    "#0ea5a4",
-    "#475569",
-    "#16a34a",
-    "#1d4ed8",
+    "#0891b2",
+    "#65a30d",
+    "#334155",
 ]
 
 
@@ -58,142 +58,235 @@ def inject_custom_css() -> None:
     st.markdown(
         """
         <style>
-          @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap');
 
           :root {
-            --bg-main: #f6f8fb;
-            --bg-gradient-a: #f8faff;
-            --bg-gradient-b: #f5f9f8;
-            --card-bg: rgba(255, 255, 255, 0.94);
-            --card-border: rgba(15, 23, 42, 0.09);
-            --text-main: #0f172a;
-            --text-muted: #475569;
-            --accent: #2563eb;
-            --accent-soft: rgba(37, 99, 235, 0.10);
-            --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.05);
+            --bg-main: #f3f5f7;
+            --bg-spot-a: rgba(15, 98, 254, 0.10);
+            --bg-spot-b: rgba(15, 118, 110, 0.10);
+            --card-bg: #ffffff;
+            --surface-bg: rgba(255, 255, 255, 0.82);
+            --line-soft: rgba(15, 23, 42, 0.10);
+            --line-strong: rgba(15, 23, 42, 0.18);
+            --text-main: #0b1220;
+            --text-muted: #4b5563;
+            --accent: #0f62fe;
+            --accent-soft: rgba(15, 98, 254, 0.12);
+            --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.07);
           }
 
           .stApp {
             background:
-              radial-gradient(1100px 460px at 8% -15%, var(--bg-gradient-a), transparent 62%),
-              radial-gradient(900px 420px at 102% -8%, var(--bg-gradient-b), transparent 62%),
+              radial-gradient(920px 420px at 0% -12%, var(--bg-spot-a), transparent 64%),
+              radial-gradient(800px 380px at 102% -6%, var(--bg-spot-b), transparent 66%),
               var(--bg-main);
             color: var(--text-main);
-            font-family: "Manrope", "Segoe UI", sans-serif;
+            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+          }
+
+          main .block-container {
+            max-width: 1450px;
+            padding-top: 1.1rem;
+            padding-bottom: 2.8rem;
+          }
+
+          [data-testid="stHeader"] {
+            background: transparent;
+          }
+
+          #MainMenu, footer {
+            visibility: hidden;
           }
 
           [data-testid="stSidebar"] {
-            background: rgba(255, 255, 255, 0.94);
-            border-right: 1px solid var(--card-border);
+            background: var(--surface-bg);
+            border-right: 1px solid var(--line-soft);
+            backdrop-filter: blur(6px);
+          }
+
+          [data-testid="stSidebar"] .block-container {
+            padding-top: 0.8rem;
           }
 
           h1, h2, h3 {
-            font-family: "Manrope", "Segoe UI", sans-serif;
-            letter-spacing: -0.02em;
-            color: #0f172a;
+            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+            letter-spacing: -0.025em;
+            color: var(--text-main);
             font-weight: 700;
           }
 
+          h1 {
+            font-size: 1.62rem;
+            margin-bottom: 0.15rem;
+          }
+
           .hero {
-            padding: 1rem 1.1rem;
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
+            padding: 1rem 1.1rem 1.05rem 1.1rem;
+            border: 1px solid var(--line-soft);
+            border-radius: 16px;
             background: var(--card-bg);
-            box-shadow: var(--shadow-soft);
+            box-shadow: var(--shadow-card);
             margin: 0.15rem 0 1rem 0;
             position: relative;
+            overflow: hidden;
           }
 
           .hero::before {
             content: '';
             position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 4px;
-            border-radius: 12px 0 0 12px;
-            background: linear-gradient(180deg, #2563eb 0%, #0f766e 100%);
+            right: -56px;
+            top: -56px;
+            width: 180px;
+            height: 180px;
+            border-radius: 50%;
+            background: radial-gradient(circle at center, var(--accent-soft), transparent 70%);
+          }
+
+          .hero-eyebrow {
+            margin: 0 0 0.34rem 0;
+            font-size: 0.68rem;
+            letter-spacing: 0.11em;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #5b6472;
           }
 
           .hero-title {
-            margin: 0 0 0 0.35rem;
-            font-family: "Manrope", "Segoe UI", sans-serif;
-            font-size: 1.35rem;
-            letter-spacing: -0.02em;
+            margin: 0;
+            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+            font-size: 1.22rem;
+            letter-spacing: -0.026em;
             font-weight: 800;
-            color: #0f172a;
+            color: var(--text-main);
           }
 
           .hero-subtitle {
-            margin: 0.25rem 0 0 0.35rem;
+            margin: 0.35rem 0 0 0;
             color: var(--text-muted);
-            font-size: 0.92rem;
+            font-size: 0.9rem;
+            line-height: 1.45;
+            max-width: 820px;
           }
 
           [data-testid="stMetric"] {
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 0.55rem 0.7rem 0.5rem 0.7rem;
-            background: var(--card-bg);
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+            border: 1px solid var(--line-soft);
+            border-radius: 14px;
+            padding: 0.58rem 0.72rem 0.52rem 0.72rem;
+            background: #ffffff;
+            box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04);
+            transition: transform .16s ease, box-shadow .16s ease;
+          }
+
+          [data-testid="stMetric"]:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
           }
 
           [data-testid="stMetricLabel"] {
             color: #64748b;
             font-weight: 600;
-            letter-spacing: 0.01em;
+            letter-spacing: 0.015em;
           }
 
           [data-testid="stMetricValue"] {
-            color: #0f172a;
-            font-family: "IBM Plex Mono", ui-monospace, monospace;
-            font-size: 1.35rem;
+            color: #0b1220;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 1.27rem;
             font-variant-numeric: tabular-nums;
           }
 
-          [data-testid="stDataFrame"] {
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
+          [data-testid="stDataFrame"],
+          [data-testid="stTable"],
+          [data-testid="stForm"],
+          [data-testid="stAlert"] {
+            border: 1px solid var(--line-soft);
+            border-radius: 14px;
             overflow: hidden;
             box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            background: #ffffff;
           }
 
           [data-testid="stForm"] {
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            background: var(--card-bg);
             padding: 0.8rem 0.85rem 0.6rem 0.85rem;
-            box-shadow: var(--shadow-soft);
+            box-shadow: var(--shadow-card);
+          }
+
+          [data-testid="stAlert"] {
+            border-left: 3px solid var(--accent);
           }
 
           [data-baseweb="select"] > div,
           .stTextInput > div > div > input,
           .stDateInput > div > div input,
+          .stNumberInput > div > div > input,
+          .stMultiSelect > div > div,
           .stTextArea > div > div > textarea {
-            border-radius: 10px;
-            border-color: rgba(15, 23, 42, 0.14);
+            border-radius: 11px;
+            border: 1px solid var(--line-soft);
             background: #ffffff;
+            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+          }
+
+          [data-baseweb="select"] > div:focus-within,
+          .stTextInput > div > div > input:focus,
+          .stDateInput > div > div input:focus,
+          .stNumberInput > div > div > input:focus,
+          .stTextArea > div > div > textarea:focus {
+            border-color: rgba(15, 98, 254, 0.45);
+            box-shadow: 0 0 0 3px rgba(15, 98, 254, 0.14);
+          }
+
+          .stTabs [role="tablist"] {
+            gap: 0.35rem;
           }
 
           .stTabs [role="tab"] {
-            border-radius: 8px;
+            border-radius: 999px;
+            border: 1px solid var(--line-soft);
+            background: rgba(255, 255, 255, 0.72);
+            font-weight: 600;
+            color: #4b5563;
+            padding: 0.35rem 0.85rem;
+          }
+
+          .stTabs [role="tab"][aria-selected="true"] {
+            background: #111827;
+            border-color: #111827;
+            color: #f8fafc;
           }
 
           .stButton > button,
           div[data-testid="stFormSubmitButton"] button {
-            background: #2563eb;
+            background: #111827;
             color: white;
-            border: 1px solid #1d4ed8;
-            border-radius: 10px;
+            border: 1px solid #0b1220;
+            border-radius: 11px;
             font-weight: 600;
-            transition: transform .14s ease, box-shadow .14s ease;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 6px 14px rgba(37, 99, 235, 0.18);
+            transition: transform .14s ease, box-shadow .14s ease, background .14s ease;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.18);
           }
 
           .stButton > button:hover,
           div[data-testid="stFormSubmitButton"] button:hover {
-            background: #1d4ed8;
-            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
+            background: #0b1220;
+            transform: translateY(-1px);
+            box-shadow: 0 14px 24px rgba(15, 23, 42, 0.25);
+          }
+
+          .stProgress > div > div > div > div {
+            background: var(--accent);
+          }
+
+          @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+
+          .hero,
+          [data-testid="stMetric"],
+          [data-testid="stDataFrame"],
+          [data-testid="stForm"] {
+            animation: fadeSlideIn .32s ease-out both;
           }
         </style>
         """,
@@ -204,18 +297,35 @@ def inject_custom_css() -> None:
 def style_figure(fig, title: str | None = None):
     fig.update_layout(
         template="plotly_white",
-        font={"family": "Manrope, Segoe UI, sans-serif", "size": 12, "color": "#0f172a"},
+        font={"family": "Plus Jakarta Sans, Segoe UI, sans-serif", "size": 12, "color": "#0b1220"},
         colorway=CHART_COLORS,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="#ffffff",
         hovermode="x unified",
-        margin={"l": 22, "r": 14, "t": 62, "b": 24},
+        margin={"l": 20, "r": 14, "t": 60, "b": 22},
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+        hoverlabel={
+            "bgcolor": "#111827",
+            "font": {"color": "#f8fafc", "family": "Plus Jakarta Sans, Segoe UI, sans-serif", "size": 12},
+        },
     )
     if title:
-        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 16}})
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)", zeroline=False)
+        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 17}})
+    fig.update_xaxes(
+        showgrid=False,
+        zeroline=False,
+        showline=True,
+        linecolor="rgba(15, 23, 42, 0.18)",
+        ticks="outside",
+        tickcolor="rgba(15, 23, 42, 0.24)",
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+        showline=True,
+        linecolor="rgba(15, 23, 42, 0.10)",
+    )
     return fig
 
 
@@ -1270,13 +1380,14 @@ def run_grid_search(
 # UI
 # -----------------------------
 inject_custom_css()
-st.title("ETF Dashboard (Sector → Subsector → Ticker)")
+st.title("Ticker DB Dashboard")
 st.markdown(
     """
     <div class="hero">
-      <p class="hero-title">Market Dashboard</p>
+      <p class="hero-eyebrow">Portfolio Intelligence</p>
+      <p class="hero-title">ETF Structure + Signal Console</p>
       <p class="hero-subtitle">
-        Explore sector structure, build custom baskets, and monitor short-horizon winners with a cleaner signal-first layout.
+        Analyze sector structure, intraday leadership, and strategy simulations in one streamlined interface.
       </p>
     </div>
     """,
