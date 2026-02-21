@@ -20,6 +20,7 @@
 #   If neither exists, it falls back to equal weights and shows a warning.
 
 import os
+import math
 from datetime import date, datetime, timedelta, timezone
 from itertools import product
 from typing import Sequence, Literal, Tuple, Callable
@@ -391,6 +392,96 @@ def inject_custom_css() -> None:
     )
 
 
+def _extract_numeric_values(values) -> list[float]:
+    out: list[float] = []
+    if values is None:
+        return out
+    for v in values:
+        if v is None or pd.isna(v):
+            continue
+        if isinstance(v, (datetime, date, pd.Timestamp)):
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(f):
+            out.append(f)
+    return out
+
+
+def _looks_datetime_like(values) -> bool:
+    if values is None:
+        return False
+    for v in values:
+        if v is None or pd.isna(v):
+            continue
+        if isinstance(v, (datetime, date, pd.Timestamp)):
+            return True
+    return False
+
+
+def _format_datetime_as_ordinal_labels(values) -> tuple[list[str | None], list[str]]:
+    parsed: list[pd.Timestamp | str | None] = []
+    has_time_component = False
+
+    for v in values:
+        if v is None or pd.isna(v):
+            parsed.append(None)
+            continue
+        ts = pd.to_datetime(v, errors="coerce")
+        if pd.isna(ts):
+            parsed.append(str(v))
+            continue
+        if getattr(ts, "tzinfo", None) is not None:
+            try:
+                ts = ts.tz_convert(None)
+            except Exception:
+                ts = ts.tz_localize(None)
+        if ts.hour != 0 or ts.minute != 0 or ts.second != 0:
+            has_time_component = True
+        parsed.append(ts)
+
+    fmt = "%Y-%m-%d %H:%M" if has_time_component else "%Y-%m-%d"
+    labels: list[str | None] = []
+    order: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        if item is None:
+            labels.append(None)
+            continue
+        if isinstance(item, pd.Timestamp):
+            label = item.strftime(fmt)
+        else:
+            label = str(item)
+        labels.append(label)
+        if label not in seen:
+            seen.add(label)
+            order.append(label)
+    return labels, order
+
+
+def _nice_tick_step(vmin: float, vmax: float) -> float | None:
+    spread = float(abs(vmax - vmin))
+    if spread <= 0:
+        return None
+
+    raw = spread / 10.0
+    if raw >= 1.0:
+        quantum = 0.5
+    elif raw >= 0.1:
+        quantum = 0.05
+    elif raw >= 0.01:
+        quantum = 0.005
+    else:
+        quantum = 0.001
+
+    step = round(raw / quantum) * quantum
+    if step <= 0:
+        step = quantum
+    return float(step)
+
+
 def style_figure(fig, title: str | None = None):
     fig.update_layout(
         template="plotly_white",
@@ -399,16 +490,17 @@ def style_figure(fig, title: str | None = None):
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="#fcfdff",
         hovermode="x unified",
-        margin={"l": 18, "r": 12, "t": 56, "b": 92},
+        margin={"l": 18, "r": 12, "t": 56, "b": 120},
         legend={
             "orientation": "h",
             "yanchor": "top",
-            "y": -0.22,
+            "y": -0.25,
             "xanchor": "left",
             "x": 0,
             "title": {"text": ""},
             "font": {"size": 11},
-            "itemwidth": 40,
+            "entrywidth": 72,
+            "entrywidthmode": "pixels",
             "tracegroupgap": 4,
         },
         hoverlabel={
@@ -431,6 +523,22 @@ def style_figure(fig, title: str | None = None):
         },
     )
 
+    # For date/time x-axes: preserve order but keep uniform spacing between points.
+    category_order: list[str] = []
+    category_seen: set[str] = set()
+    has_datetime_x = False
+    for trace in fig.data:
+        x = getattr(trace, "x", None)
+        if x is None or not _looks_datetime_like(x):
+            continue
+        labels, order = _format_datetime_as_ordinal_labels(x)
+        trace.x = labels
+        has_datetime_x = True
+        for label in order:
+            if label not in category_seen:
+                category_seen.add(label)
+                category_order.append(label)
+
     fig.update_xaxes(
         showgrid=False,
         zeroline=False,
@@ -444,7 +552,60 @@ def style_figure(fig, title: str | None = None):
         zeroline=False,
         showline=True,
         linecolor="rgba(62, 82, 111, 0.12)",
+        ticks="inside",
+        ticklabelposition="inside",
+        ticklen=3,
     )
+
+    if has_datetime_x and category_order:
+        fig.update_xaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=category_order,
+            tickmode="auto",
+        )
+
+    # Dynamic numeric tick references: roughly (max-min)/10 with rounded clean steps.
+    y_vals: list[float] = []
+    x_vals: list[float] = []
+    for trace in fig.data:
+        y = getattr(trace, "y", None)
+        if y is not None and not _looks_datetime_like(y):
+            y_vals.extend(_extract_numeric_values(y))
+        x = getattr(trace, "x", None)
+        if x is not None and not _looks_datetime_like(x):
+            x_vals.extend(_extract_numeric_values(x))
+
+    if y_vals:
+        y_min = min(y_vals)
+        y_max = max(y_vals)
+        y_step = _nice_tick_step(y_min, y_max)
+        if y_step:
+            y_pad = y_step * 0.8
+            y0 = math.floor((y_min - y_pad) / y_step) * y_step
+            y1 = math.ceil((y_max + y_pad) / y_step) * y_step
+            fig.update_yaxes(
+                tickmode="linear",
+                dtick=y_step,
+                range=[y0, y1],
+                ticks="inside",
+                ticklabelposition="inside",
+            )
+
+    if x_vals:
+        x_min = min(x_vals)
+        x_max = max(x_vals)
+        x_step = _nice_tick_step(x_min, x_max)
+        if x_step:
+            x_pad = x_step * 0.6
+            x0 = math.floor((x_min - x_pad) / x_step) * x_step
+            x1 = math.ceil((x_max + x_pad) / x_step) * x_step
+            fig.update_xaxes(
+                tickmode="linear",
+                dtick=x_step,
+                range=[x0, x1],
+            )
+
     return fig
 
 
