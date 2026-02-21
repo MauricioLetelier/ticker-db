@@ -20,7 +20,6 @@
 #   If neither exists, it falls back to equal weights and shows a warning.
 
 import os
-import html
 from datetime import date, datetime, timedelta, timezone
 from itertools import product
 from typing import Sequence, Literal, Tuple, Callable
@@ -368,392 +367,6 @@ def inject_custom_css() -> None:
             background: #3f6ea9;
           }
 
-          .overview-kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 0.86rem;
-            margin: 0.22rem 0 1.05rem 0;
-          }
-
-          .overview-kpi-card {
-            border: 1px solid var(--card-border);
-            border-radius: 14px;
-            background: #fdfdff;
-            box-shadow: 0 2px 4px rgba(37, 58, 88, 0.08);
-            overflow: hidden;
-          }
-
-          .overview-kpi-top {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.4rem;
-            padding: 0.72rem 0.86rem 0.7rem 0.86rem;
-            border-bottom: 1px solid #dce2ec;
-          }
-
-          .overview-kpi-label-wrap {
-            display: flex;
-            align-items: center;
-            gap: 0.58rem;
-          }
-
-          .overview-kpi-icon {
-            width: 34px;
-            height: 34px;
-            border-radius: 10px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.96rem;
-            color: #2b4f7d;
-            border: 1px solid rgba(54, 86, 129, 0.26);
-            background: #edf3fb;
-          }
-
-          .overview-kpi-label {
-            font-size: 0.75rem;
-            font-weight: 800;
-            letter-spacing: 0.01em;
-            color: #1f3554;
-            margin: 0;
-          }
-
-          .overview-kpi-chevron {
-            color: #8f9db2;
-            font-size: 1.03rem;
-            font-weight: 700;
-          }
-
-          .overview-kpi-bottom {
-            display: flex;
-            align-items: flex-end;
-            justify-content: space-between;
-            gap: 0.8rem;
-            padding: 0.7rem 0.86rem 0.8rem 0.86rem;
-          }
-
-          .overview-kpi-value {
-            font-family: "DM Sans", "Nunito", sans-serif;
-            font-size: 2rem;
-            line-height: 1;
-            font-weight: 700;
-            letter-spacing: -0.03em;
-            color: #1a2c44;
-            margin: 0;
-          }
-
-          .overview-kpi-subtitle {
-            margin: 0.2rem 0 0 0;
-            color: #7f8b9b;
-            font-size: 0.81rem;
-            font-weight: 700;
-          }
-
-          .overview-kpi-bars {
-            display: flex;
-            align-items: flex-end;
-            gap: 0.28rem;
-            min-height: 48px;
-          }
-
-          .overview-kpi-bars span {
-            width: 11px;
-            border-radius: 3px 3px 2px 2px;
-            background: rgba(61, 92, 132, 0.9);
-          }
-
-          .overview-grid {
-            display: grid;
-            grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.45fr);
-            gap: 0.95rem;
-            margin-bottom: 1.05rem;
-          }
-
-          .overview-panel {
-            border: 1px solid var(--card-border);
-            border-radius: 14px;
-            background: #fdfdff;
-            overflow: hidden;
-            box-shadow: 0 2px 5px rgba(29, 45, 67, 0.08);
-            min-height: 484px;
-          }
-
-          .overview-panel-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0.8rem 0.95rem;
-            border-bottom: 1px solid #dde3ed;
-            background: #f4f7fc;
-          }
-
-          .overview-panel-title {
-            margin: 0;
-            font-family: "DM Sans", "Nunito", sans-serif;
-            font-size: 1.06rem;
-            font-weight: 700;
-            color: #2b4e7c;
-            letter-spacing: -0.01em;
-          }
-
-          .overview-panel-chip {
-            width: 38px;
-            height: 38px;
-            border-radius: 12px;
-            border: 1px solid #cfdaea;
-            background: #edf3fb;
-            color: #2f5788;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-            font-weight: 700;
-          }
-
-          .overview-panel-body {
-            padding: 0.92rem 0.95rem 1rem 0.95rem;
-          }
-
-          .overview-section-label {
-            margin: 0;
-            font-size: 0.72rem;
-            color: #7d8998;
-            font-weight: 800;
-            letter-spacing: 0.07em;
-            text-transform: uppercase;
-          }
-
-          .overview-progress-wrap {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0.6rem;
-            margin-top: 0.58rem;
-            margin-bottom: 0.9rem;
-          }
-
-          .overview-progress-card {
-            border: 1px solid #d9e0eb;
-            border-radius: 10px;
-            background: #f9fbff;
-            padding: 0.56rem 0.62rem;
-          }
-
-          .overview-progress-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.5rem;
-            margin-bottom: 0.4rem;
-          }
-
-          .overview-progress-title {
-            margin: 0;
-            font-size: 0.86rem;
-            font-weight: 700;
-            color: #37547d;
-          }
-
-          .overview-progress-value {
-            margin: 0;
-            font-size: 0.82rem;
-            font-weight: 800;
-            color: #23426c;
-          }
-
-          .overview-progress-track {
-            height: 5px;
-            border-radius: 100px;
-            background: #dfe5f0;
-            overflow: hidden;
-          }
-
-          .overview-progress-fill {
-            height: 100%;
-            border-radius: 100px;
-            background: linear-gradient(90deg, #4b73a8 0%, #2f5688 100%);
-          }
-
-          .overview-list-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 0.74rem;
-          }
-
-          .overview-list-title {
-            margin: 0;
-            font-size: 1rem;
-            color: #2c3f5c;
-            font-weight: 800;
-          }
-
-          .overview-list-count {
-            color: #456ea5;
-            background: rgba(69, 110, 165, 0.14);
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: 800;
-            padding: 0.16rem 0.52rem;
-          }
-
-          .overview-timeline {
-            position: relative;
-            margin-top: 0.2rem;
-            padding-left: 0.32rem;
-          }
-
-          .overview-timeline::before {
-            content: "";
-            position: absolute;
-            left: 55px;
-            top: 6px;
-            bottom: 6px;
-            width: 2px;
-            background: #cae0c5;
-          }
-
-          .overview-item {
-            display: grid;
-            grid-template-columns: 48px 14px 1fr;
-            gap: 0.46rem;
-            align-items: center;
-            margin-bottom: 0.52rem;
-          }
-
-          .overview-time {
-            font-size: 0.9rem;
-            font-weight: 700;
-            color: #6f7f95;
-          }
-
-          .overview-dot {
-            width: 9px;
-            height: 9px;
-            border-radius: 50%;
-            background: #7eb980;
-            position: relative;
-            z-index: 1;
-            justify-self: center;
-          }
-
-          .overview-item-card {
-            border: 1px solid #dde4ee;
-            border-radius: 12px;
-            background: #fcfdff;
-            padding: 0.58rem 0.66rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.66rem;
-          }
-
-          .overview-item-main {
-            min-width: 0;
-          }
-
-          .overview-item-ticker {
-            margin: 0;
-            font-size: 1rem;
-            color: #223955;
-            font-weight: 800;
-          }
-
-          .overview-item-note {
-            margin: 0.08rem 0 0 0;
-            font-size: 0.82rem;
-            color: #7b8798;
-            font-weight: 700;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-          }
-
-          .overview-pill {
-            border-radius: 999px;
-            font-size: 0.77rem;
-            font-weight: 800;
-            padding: 0.2rem 0.52rem;
-            white-space: nowrap;
-          }
-
-          .overview-pill.up {
-            color: #1d6635;
-            background: rgba(42, 146, 79, 0.16);
-          }
-
-          .overview-pill.down {
-            color: #9d3137;
-            background: rgba(209, 66, 78, 0.14);
-          }
-
-          .overview-leader-top {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.8rem;
-            padding-bottom: 0.7rem;
-            border-bottom: 1px solid #dee5ef;
-            margin-bottom: 0.8rem;
-          }
-
-          .overview-avatar {
-            width: 44px;
-            height: 44px;
-            border-radius: 50%;
-            border: 1px solid #cbd8ea;
-            background: radial-gradient(circle at 32% 25%, #7ea1cc 0%, #3f6699 58%, #2d4d79 100%);
-            box-shadow: inset 0 0 0 5px rgba(247, 251, 255, 0.42);
-            flex-shrink: 0;
-          }
-
-          .overview-leader-name {
-            margin: 0;
-            font-size: 1.62rem;
-            letter-spacing: -0.01em;
-            font-family: "DM Sans", "Nunito", sans-serif;
-            color: #1d3555;
-            font-weight: 700;
-          }
-
-          .overview-leader-sub {
-            margin: 0.12rem 0 0 0;
-            font-size: 0.9rem;
-            color: #718096;
-            font-weight: 700;
-          }
-
-          .overview-stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0.72rem 1rem;
-            margin-bottom: 0.86rem;
-          }
-
-          .overview-stat-label {
-            margin: 0;
-            font-size: 0.7rem;
-            color: #7c8899;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            font-weight: 800;
-          }
-
-          .overview-stat-value {
-            margin: 0.16rem 0 0 0;
-            font-size: 1.03rem;
-            color: #203956;
-            font-weight: 800;
-          }
-
-          .overview-note {
-            border-top: 1px solid #dfe6f1;
-            padding-top: 0.72rem;
-            color: #65748a;
-            font-size: 0.88rem;
-            font-weight: 700;
-          }
-
           @media (max-width: 960px) {
             main .block-container {
               margin-top: 0.3rem;
@@ -765,15 +378,6 @@ def inject_custom_css() -> None:
             }
             [data-testid="stSidebar"] .block-container {
               padding-top: 0.8rem;
-            }
-            .overview-kpi-grid {
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-            .overview-grid {
-              grid-template-columns: 1fr;
-            }
-            .overview-panel {
-              min-height: auto;
             }
           }
         </style>
@@ -815,258 +419,6 @@ def style_figure(fig, title: str | None = None):
         linecolor="rgba(62, 82, 111, 0.12)",
     )
     return fig
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or pd.isna(value):
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _spark_heights(values: Sequence[float], bars: int = 6) -> list[int]:
-    cleaned = [_safe_float(v, 0.0) for v in values if v is not None and not pd.isna(v)]
-    if not cleaned:
-        return [26 for _ in range(bars)]
-
-    if len(cleaned) < bars:
-        cleaned = [cleaned[0]] * (bars - len(cleaned)) + cleaned
-    elif len(cleaned) > bars:
-        if bars == 1:
-            cleaned = [cleaned[-1]]
-        else:
-            stride = (len(cleaned) - 1) / float(bars - 1)
-            cleaned = [cleaned[int(round(i * stride))] for i in range(bars)]
-
-    lo = min(cleaned)
-    hi = max(cleaned)
-    if abs(hi - lo) < 1e-9:
-        return [26 for _ in cleaned]
-
-    return [int(18 + ((v - lo) / (hi - lo)) * 28) for v in cleaned]
-
-
-def render_overview_stat_cards(cards: Sequence[dict]) -> None:
-    if not cards:
-        return
-
-    nodes: list[str] = []
-    for card in cards:
-        title = html.escape(str(card.get("title", "")))
-        value = html.escape(str(card.get("value", "-")))
-        subtitle = html.escape(str(card.get("subtitle", "")))
-        icon = html.escape(str(card.get("icon", "•")))
-        accent = str(card.get("accent", "#3a5f90"))
-        spark_raw = card.get("spark", [])
-        spark_values = spark_raw if isinstance(spark_raw, (list, tuple, pd.Series)) else []
-        heights = _spark_heights(spark_values, bars=6)
-        denom = max(1, len(heights) - 1)
-        bars_html = "".join(
-            f'<span style="height:{h}px;opacity:{0.28 + (idx / denom) * 0.7:.2f};background:{accent};"></span>'
-            for idx, h in enumerate(heights)
-        )
-        nodes.append(
-            f"""
-            <article class="overview-kpi-card">
-              <div class="overview-kpi-top">
-                <div class="overview-kpi-label-wrap">
-                  <span class="overview-kpi-icon">{icon}</span>
-                  <p class="overview-kpi-label">{title}</p>
-                </div>
-                <span class="overview-kpi-chevron">›</span>
-              </div>
-              <div class="overview-kpi-bottom">
-                <div>
-                  <p class="overview-kpi-value">{value}</p>
-                  <p class="overview-kpi-subtitle">{subtitle}</p>
-                </div>
-                <div class="overview-kpi-bars">{bars_html}</div>
-              </div>
-            </article>
-            """
-        )
-
-    st.markdown(
-        f'<section class="overview-kpi-grid">{"".join(nodes)}</section>',
-        unsafe_allow_html=True,
-    )
-
-
-def _fmt_short_date(value) -> str:
-    ts = pd.to_datetime(value, errors="coerce")
-    if pd.isna(ts):
-        return "n/a"
-    return ts.strftime("%b %d, %Y")
-
-
-def render_overview_queue_panel(rank_7d: pd.DataFrame, rank_30d: pd.DataFrame, max_items: int = 5) -> None:
-    total_7 = len(rank_7d)
-    total_30 = len(rank_30d)
-    pos_7 = int((rank_7d["return_pct"] > 0).sum()) if total_7 else 0
-    pos_30 = int((rank_30d["return_pct"] > 0).sum()) if total_30 else 0
-    pct_7 = int(round((pos_7 / total_7) * 100)) if total_7 else 0
-    pct_30 = int(round((pos_30 / total_30) * 100)) if total_30 else 0
-
-    timeline_df = rank_7d.head(max_items) if total_7 else rank_30d.head(max_items)
-    rows: list[str] = []
-    for idx, row in timeline_df.reset_index(drop=True).iterrows():
-        ticker = html.escape(str(row.get("ticker", "-")))
-        ret = _safe_float(row.get("return_pct"), 0.0)
-        start_dt = _fmt_short_date(row.get("start_dt"))
-        end_dt = _fmt_short_date(row.get("latest_dt"))
-        pill_class = "up" if ret >= 0 else "down"
-        slot = f"{8 + idx:02d}.00"
-        rows.append(
-            f"""
-            <div class="overview-item">
-              <span class="overview-time">{slot}</span>
-              <span class="overview-dot"></span>
-              <div class="overview-item-card">
-                <div class="overview-item-main">
-                  <p class="overview-item-ticker">{ticker}</p>
-                  <p class="overview-item-note">{start_dt} to {end_dt}</p>
-                </div>
-                <span class="overview-pill {pill_class}">{ret:+.2f}%</span>
-              </div>
-            </div>
-            """
-        )
-
-    if not rows:
-        rows.append(
-            """
-            <div class="overview-item">
-              <span class="overview-time">--.--</span>
-              <span class="overview-dot"></span>
-              <div class="overview-item-card">
-                <div class="overview-item-main">
-                  <p class="overview-item-ticker">No ranking data</p>
-                  <p class="overview-item-note">Backfill daily data to populate this queue.</p>
-                </div>
-                <span class="overview-pill down">n/a</span>
-              </div>
-            </div>
-            """
-        )
-
-    st.markdown(
-        f"""
-        <article class="overview-panel">
-          <div class="overview-panel-head">
-            <h3 class="overview-panel-title">Today Appointments</h3>
-            <span class="overview-panel-chip">⌚</span>
-          </div>
-          <div class="overview-panel-body">
-            <p class="overview-section-label">Attended Appointments</p>
-            <div class="overview-progress-wrap">
-              <div class="overview-progress-card">
-                <div class="overview-progress-head">
-                  <p class="overview-progress-title">7D Positive</p>
-                  <p class="overview-progress-value">{pos_7}/{total_7}</p>
-                </div>
-                <div class="overview-progress-track"><div class="overview-progress-fill" style="width:{pct_7}%;"></div></div>
-              </div>
-              <div class="overview-progress-card">
-                <div class="overview-progress-head">
-                  <p class="overview-progress-title">30D Positive</p>
-                  <p class="overview-progress-value">{pos_30}/{total_30}</p>
-                </div>
-                <div class="overview-progress-track"><div class="overview-progress-fill" style="width:{pct_30}%;"></div></div>
-              </div>
-            </div>
-            <div class="overview-list-head">
-              <p class="overview-list-title">Appointment</p>
-              <span class="overview-list-count">{len(rows)}</span>
-            </div>
-            <div class="overview-timeline">
-              {"".join(rows)}
-            </div>
-          </div>
-        </article>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_overview_leader_panel(rank_7d: pd.DataFrame, rank_30d: pd.DataFrame) -> None:
-    if rank_30d.empty and rank_7d.empty:
-        st.info("No ranking data available for the current selection.")
-        return
-
-    leader_row = rank_30d.iloc[0] if not rank_30d.empty else rank_7d.iloc[0]
-    ticker = str(leader_row.get("ticker", "n/a"))
-    return_30 = _safe_float(leader_row.get("return_pct"), 0.0)
-    start_dt = _fmt_short_date(leader_row.get("start_dt"))
-    latest_dt = _fmt_short_date(leader_row.get("latest_dt"))
-
-    return_7 = None
-    if not rank_7d.empty:
-        matches = rank_7d.loc[rank_7d["ticker"] == ticker, "return_pct"]
-        if not matches.empty:
-            return_7 = _safe_float(matches.iloc[0], 0.0)
-
-    total_30 = len(rank_30d)
-    pos_30 = int((rank_30d["return_pct"] > 0).sum()) if total_30 else 0
-    breadth_30 = f"{pos_30}/{total_30}" if total_30 else "n/a"
-
-    top_peers = rank_30d.head(3) if not rank_30d.empty else rank_7d.head(3)
-    peer_rows = []
-    for _, row in top_peers.iterrows():
-        peer_rows.append(f"{html.escape(str(row['ticker']))} ({_safe_float(row['return_pct']):+.2f}%)")
-    peers = ", ".join(peer_rows) if peer_rows else "n/a"
-
-    signal_7_text = "n/a" if return_7 is None else f"{return_7:+.2f}%"
-    trend_class = "up" if return_30 >= 0 else "down"
-    trend_label = "Uptrend" if return_30 >= 0 else "Downtrend"
-
-    st.markdown(
-        f"""
-        <article class="overview-panel">
-          <div class="overview-panel-head">
-            <h3 class="overview-panel-title">On Going Appointments</h3>
-            <span class="overview-panel-chip">◎</span>
-          </div>
-          <div class="overview-panel-body">
-            <div class="overview-leader-top">
-              <div style="display:flex;align-items:center;gap:0.72rem;">
-                <span class="overview-avatar"></span>
-                <div>
-                  <p class="overview-leader-name">{html.escape(ticker)}</p>
-                  <p class="overview-leader-sub">Primary ranked instrument • {trend_label}</p>
-                </div>
-              </div>
-              <span class="overview-pill {trend_class}">{return_30:+.2f}%</span>
-            </div>
-            <div class="overview-stats-grid">
-              <div>
-                <p class="overview-stat-label">Referring Doctor</p>
-                <p class="overview-stat-value">7D Return</p>
-                <p class="overview-stat-value">{signal_7_text}</p>
-              </div>
-              <div>
-                <p class="overview-stat-label">Assigned Doctor</p>
-                <p class="overview-stat-value">30D Breadth</p>
-                <p class="overview-stat-value">{breadth_30}</p>
-              </div>
-              <div>
-                <p class="overview-stat-label">Started</p>
-                <p class="overview-stat-value">{html.escape(start_dt)}</p>
-              </div>
-              <div>
-                <p class="overview-stat-label">Latest Print</p>
-                <p class="overview-stat-value">{html.escape(latest_dt)}</p>
-              </div>
-            </div>
-            <p class="overview-note">
-              Peer set: {html.escape(peers)}.
-            </p>
-          </div>
-        </article>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 # -----------------------------
@@ -2136,35 +1488,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 with st.sidebar:
-    st.markdown(
-        """
-        <div class="sidebar-brand">
-          <span class="sidebar-badge">✓</span>
-          <span class="sidebar-brand-text">Shield</span>
-        </div>
-        <p class="sidebar-section">Main Menu</p>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown('<p class="sidebar-section">Navigation</p>', unsafe_allow_html=True)
     nav_choice = st.radio(
         "Navigation",
         ["Overview", "Top Performers", "Intraday Movers", "Strategy Simulator"],
         index=0,
         key="sidebar_nav",
         label_visibility="collapsed",
-    )
-    st.markdown(
-        """
-        <p class="sidebar-section">Other Menu</p>
-        <div class="sidebar-item muted">Schedules</div>
-        <div class="sidebar-item muted">Payment</div>
-        <div class="sidebar-item muted">Product & Stock</div>
-        <p class="sidebar-section">Help & Settings</p>
-        <div class="sidebar-item muted">Help Center</div>
-        <div class="sidebar-item muted">Settings</div>
-        <div class="sidebar-item muted">Report</div>
-        """,
-        unsafe_allow_html=True,
     )
 
 page = {
@@ -2175,7 +1505,7 @@ page = {
 }[nav_choice]
 
 if page == "Explorer":
-    sector_choice, subsector_choice, tickers = render_classification_filters("explorer")
+    _, _, tickers = render_classification_filters("explorer")
     default_selection = tickers[: min(8, len(tickers))]
     selected_tickers = st.multiselect("Tickers", tickers, default=default_selection)
 
@@ -2198,143 +1528,92 @@ if page == "Explorer":
         st.warning("No data found for that selection/date range (did you backfill these tickers?).")
         st.stop()
 
-    rank_limit = max(5, len(selected_tickers))
-    rank_7 = fetch_top_performers(selected_tickers, lookback_days=7, top_n=rank_limit)
-    rank_30 = fetch_top_performers(selected_tickers, lookback_days=30, top_n=rank_limit)
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Universe Size", f"{len(tickers)}")
+    with m2:
+        st.metric("Selected", f"{len(selected_tickers)}")
+    with m3:
+        st.metric("Window (days)", f"{(end - start).days}")
 
-    selected_total = len(selected_tickers)
-    pos_7 = int((rank_7["return_pct"] > 0).sum()) if not rank_7.empty else 0
-    pos_30 = int((rank_30["return_pct"] > 0).sum()) if not rank_30.empty else 0
-    latest_dt = df["dt"].max()
-    latest_coverage = int(df.loc[df["dt"] == latest_dt, "ticker"].nunique())
-    coverage_pct = (latest_coverage / selected_total) * 100.0 if selected_total else 0.0
+    st.subheader("Normalized performance (starts at 1.0)")
+    fig = px.line(df, x="dt", y="norm_close", color="ticker")
+    st.plotly_chart(style_figure(fig), use_container_width=True)
 
-    coverage_spark = df.groupby("dt", as_index=False)["ticker"].nunique()["ticker"].tail(6).tolist()
-    rank7_spark = rank_7["return_pct"].head(6).tolist() if not rank_7.empty else []
-    rank30_spark = rank_30["return_pct"].head(6).tolist() if not rank_30.empty else []
-    universe_spark = [len(tickers), selected_total, latest_coverage]
-
-    render_overview_stat_cards(
-        [
-            {
-                "title": "Appointments",
-                "value": f"{selected_total}",
-                "subtitle": f"Universe from {sector_choice}/{subsector_choice}",
-                "icon": "◧",
-                "accent": "#355f92",
-                "spark": universe_spark,
-            },
-            {
-                "title": "New Patients",
-                "value": f"{pos_7}",
-                "subtitle": "7-day positive tickers",
-                "icon": "◍",
-                "accent": "#df6323",
-                "spark": rank7_spark,
-            },
-            {
-                "title": "Follow-Up Patients",
-                "value": f"{pos_30}",
-                "subtitle": "30-day positive tickers",
-                "icon": "◌",
-                "accent": "#c79a2f",
-                "spark": rank30_spark,
-            },
-            {
-                "title": "Review Report",
-                "value": f"{coverage_pct:.0f}%",
-                "subtitle": "Latest date coverage",
-                "icon": "▣",
-                "accent": "#3a8a55",
-                "spark": coverage_spark,
-            },
-        ]
+    st.subheader("Summary")
+    last = (
+        df.sort_values(["ticker", "dt"])
+        .groupby("ticker", as_index=False)
+        .tail(1)
+        .loc[:, ["ticker", "dt", "close", "norm_close"]]
+        .rename(columns={"dt": "last_dt", "close": "last_close", "norm_close": "norm_close_last"})
     )
 
-    left_col, right_col = st.columns([1.05, 1.4], gap="medium")
-    with left_col:
-        render_overview_queue_panel(rank_7, rank_30, max_items=5)
-    with right_col:
-        render_overview_leader_panel(rank_7, rank_30)
+    last["period_return_%"] = (last["norm_close_last"] - 1.0) * 100.0
+    last = last.sort_values("period_return_%", ascending=False)
+    st.dataframe(last, use_container_width=True)
 
-    perf_tab, summary_tab, builder_tab = st.tabs(
-        ["Normalized Performance", "Return Summary", "Custom Basket Builder"]
-    )
+    st.divider()
+    st.subheader("Add / Update custom Sector/Subsector + Build Basket")
 
-    with perf_tab:
-        st.subheader("Normalized performance (starts at 1.0)")
-        fig = px.line(df, x="dt", y="norm_close", color="ticker")
-        st.plotly_chart(style_figure(fig), use_container_width=True)
-
-    with summary_tab:
-        last = (
-            df.sort_values(["ticker", "dt"])
-            .groupby("ticker", as_index=False)
-            .tail(1)
-            .loc[:, ["ticker", "dt", "close", "norm_close"]]
-            .rename(columns={"dt": "last_dt", "close": "last_close", "norm_close": "norm_close_last"})
+    with st.form("custom_subsector_form"):
+        new_sector = st.text_input("Sector name", value="Custom")
+        new_subsector = st.text_input("Subsector name", value="My Basket")
+        new_tickers = st.text_area(
+            "Tickers (comma or newline separated)",
+            value="AAPL, MSFT, NVDA",
+            help="These tickers will be inserted into instrument (if missing) and linked to the subsector.",
         )
-        last["period_return_%"] = (last["norm_close_last"] - 1.0) * 100.0
-        last = last.sort_values("period_return_%", ascending=False)
-        st.dataframe(last, use_container_width=True)
+        weight_method = st.selectbox("Basket weighting", ["equal", "market_cap"], index=0)
+        make_primary = st.checkbox(
+            "Mark classification as primary?",
+            value=False,
+            help="If checked, sets instrument_classification.is_primary for (ticker, subsector).",
+        )
+        build_basket = st.form_submit_button("Save + Build Basket")
 
-    with builder_tab:
-        st.subheader("Add / Update custom Sector/Subsector + Build Basket")
-        with st.form("custom_subsector_form"):
-            new_sector = st.text_input("Sector name", value="Custom")
-            new_subsector = st.text_input("Subsector name", value="My Basket")
-            new_tickers = st.text_area(
-                "Tickers (comma or newline separated)",
-                value="AAPL, MSFT, NVDA",
-                help="These tickers will be inserted into instrument (if missing) and linked to the subsector.",
+    if build_basket:
+        tickers_list = [t.strip().upper() for t in new_tickers.replace("\n", ",").split(",") if t.strip()]
+
+        if not tickers_list:
+            st.error("Please provide at least one ticker.")
+            st.stop()
+
+        try:
+            conn = get_conn()
+            subsector_id, basket_df, weights_df, warn = create_or_update_subsector_basket(
+                conn,
+                sector_name=new_sector.strip(),
+                subsector_name=new_subsector.strip(),
+                tickers=tickers_list,
+                weight_method=weight_method,
+                start=start,
+                end=end,
+                is_primary=make_primary,
             )
-            weight_method = st.selectbox("Basket weighting", ["equal", "market_cap"], index=0)
-            make_primary = st.checkbox(
-                "Mark classification as primary?",
-                value=False,
-                help="If checked, sets instrument_classification.is_primary for (ticker, subsector).",
+        except Exception as e:
+            st.exception(e)
+            st.stop()
+
+        st.success(f"Saved. subsector_id = {subsector_id}")
+
+        if warn:
+            st.warning(warn)
+
+        st.write("Weights used:")
+        st.dataframe(weights_df.sort_values("w", ascending=False), use_container_width=True)
+
+        if basket_df.empty:
+            st.warning("No basket price data found (missing prices_1d backfill for these tickers?).")
+        else:
+            st.subheader("Basket (weighted, then normalized to 1.0 at start)")
+            fig2 = px.line(basket_df, x="dt", y="basket_norm", title="Basket normalized performance")
+            st.plotly_chart(style_figure(fig2), use_container_width=True)
+
+            st.caption(
+                "Basket is computed as Σ(wᵢ·closeᵢ) per day, then normalized by its first value "
+                "in the selected period."
             )
-            build_basket = st.form_submit_button("Save + Build Basket")
-
-        if build_basket:
-            tickers_list = [t.strip().upper() for t in new_tickers.replace("\n", ",").split(",") if t.strip()]
-            if not tickers_list:
-                st.error("Please provide at least one ticker.")
-                st.stop()
-
-            try:
-                conn = get_conn()
-                subsector_id, basket_df, weights_df, warn = create_or_update_subsector_basket(
-                    conn,
-                    sector_name=new_sector.strip(),
-                    subsector_name=new_subsector.strip(),
-                    tickers=tickers_list,
-                    weight_method=weight_method,
-                    start=start,
-                    end=end,
-                    is_primary=make_primary,
-                )
-            except Exception as e:
-                st.exception(e)
-                st.stop()
-
-            st.success(f"Saved. subsector_id = {subsector_id}")
-            if warn:
-                st.warning(warn)
-
-            st.write("Weights used:")
-            st.dataframe(weights_df.sort_values("w", ascending=False), use_container_width=True)
-
-            if basket_df.empty:
-                st.warning("No basket price data found (missing prices_1d backfill for these tickers?).")
-            else:
-                st.subheader("Basket (weighted, then normalized to 1.0 at start)")
-                fig2 = px.line(basket_df, x="dt", y="basket_norm", title="Basket normalized performance")
-                st.plotly_chart(style_figure(fig2), use_container_width=True)
-                st.caption(
-                    "Basket is computed as Σ(wᵢ·closeᵢ) per day, then normalized by its first value "
-                    "in the selected period."
-                )
 elif page == "Top Performers":
     _, _, universe_tickers = render_classification_filters("top")
     st.caption("Rankings use tickers from the selected sector/subsector universe.")
