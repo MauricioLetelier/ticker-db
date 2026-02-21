@@ -397,10 +397,20 @@ def style_figure(fig, title: str | None = None):
         font={"family": "Nunito, Segoe UI, sans-serif", "size": 12, "color": "#273852"},
         colorway=CHART_COLORS,
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#f9fafc",
+        plot_bgcolor="#fcfdff",
         hovermode="x unified",
-        margin={"l": 18, "r": 12, "t": 56, "b": 20},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+        margin={"l": 18, "r": 12, "t": 56, "b": 92},
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.22,
+            "xanchor": "left",
+            "x": 0,
+            "title": {"text": ""},
+            "font": {"size": 11},
+            "itemwidth": 40,
+            "tracegroupgap": 4,
+        },
         hoverlabel={
             "bgcolor": "#314f78",
             "font": {"color": "#f1f7ff", "family": "Nunito, Segoe UI, sans-serif", "size": 12},
@@ -408,6 +418,19 @@ def style_figure(fig, title: str | None = None):
     )
     if title:
         fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 16}})
+
+    # Keep line charts readable with explicit point markers.
+    fig.update_traces(
+        selector={"type": "scatter"},
+        mode="lines+markers",
+        line={"width": 2.6},
+        marker={
+            "size": 5,
+            "opacity": 0.95,
+            "line": {"width": 0.8, "color": "#f8fbff"},
+        },
+    )
+
     fig.update_xaxes(
         showgrid=False,
         zeroline=False,
@@ -417,8 +440,7 @@ def style_figure(fig, title: str | None = None):
         tickcolor="rgba(62, 82, 111, 0.22)",
     )
     fig.update_yaxes(
-        showgrid=True,
-        gridcolor="rgba(74, 95, 127, 0.14)",
+        showgrid=False,
         zeroline=False,
         showline=True,
         linecolor="rgba(62, 82, 111, 0.12)",
