@@ -58,36 +58,28 @@ def inject_custom_css() -> None:
     st.markdown(
         """
         <style>
-          @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=DM+Sans:wght@500;600;700&display=swap');
 
           :root {
-            --bg-main: #f3f5f7;
-            --bg-spot-a: rgba(15, 98, 254, 0.10);
-            --bg-spot-b: rgba(15, 118, 110, 0.10);
-            --card-bg: #ffffff;
-            --surface-bg: rgba(255, 255, 255, 0.82);
-            --line-soft: rgba(15, 23, 42, 0.10);
-            --line-strong: rgba(15, 23, 42, 0.18);
-            --text-main: #0b1220;
-            --text-muted: #4b5563;
-            --accent: #0f62fe;
-            --accent-soft: rgba(15, 98, 254, 0.12);
-            --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.07);
+            --shell-bg: #d3d4e0;
+            --sidebar-bg: #334a69;
+            --sidebar-bg-strong: #2e4461;
+            --sidebar-text: #e6edf6;
+            --sidebar-muted: #b5c3d7;
+            --canvas-bg: #eceff4;
+            --canvas-border: #c9d1dd;
+            --card-bg: #f8f9fc;
+            --card-border: #d5dbe5;
+            --text-main: #273852;
+            --text-muted: #75839a;
+            --accent: #31598f;
+            --accent-soft: rgba(49, 89, 143, 0.16);
           }
 
           .stApp {
-            background:
-              radial-gradient(920px 420px at 0% -12%, var(--bg-spot-a), transparent 64%),
-              radial-gradient(800px 380px at 102% -6%, var(--bg-spot-b), transparent 66%),
-              var(--bg-main);
+            background: var(--shell-bg);
             color: var(--text-main);
-            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
-          }
-
-          main .block-container {
-            max-width: 1450px;
-            padding-top: 1.1rem;
-            padding-bottom: 2.8rem;
+            font-family: "Nunito", "Segoe UI", sans-serif;
           }
 
           [data-testid="stHeader"] {
@@ -98,117 +90,217 @@ def inject_custom_css() -> None:
             visibility: hidden;
           }
 
+          main .block-container {
+            position: relative;
+            overflow: hidden;
+            max-width: 1460px;
+            margin-top: 0.85rem;
+            margin-bottom: 1rem;
+            background: var(--canvas-bg);
+            border: 1px solid var(--canvas-border);
+            border-radius: 18px;
+            box-shadow: 0 16px 38px rgba(24, 40, 66, 0.12);
+            padding: 1.55rem 1.25rem 2.1rem 1.25rem;
+          }
+
+          main .block-container::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            height: 14px;
+            background: #324c70;
+          }
+
           [data-testid="stSidebar"] {
-            background: var(--surface-bg);
-            border-right: 1px solid var(--line-soft);
-            backdrop-filter: blur(6px);
+            background: linear-gradient(180deg, var(--sidebar-bg) 0%, var(--sidebar-bg-strong) 100%);
+            border-right: none;
           }
 
           [data-testid="stSidebar"] .block-container {
-            padding-top: 0.8rem;
+            padding-top: 1.1rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
+          }
+
+          .sidebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.58rem;
+            margin: 0.12rem 0 1rem 0;
+          }
+
+          .sidebar-badge {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            color: #f6fbff;
+            font-size: 0.88rem;
+          }
+
+          .sidebar-brand-text {
+            color: #f2f7ff;
+            font-size: 1.06rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+          }
+
+          .sidebar-section {
+            color: var(--sidebar-muted);
+            font-size: 0.69rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 1.05rem 0 0.45rem 0.08rem;
+          }
+
+          .sidebar-item {
+            color: var(--sidebar-text);
+            border-radius: 9px;
+            padding: 0.38rem 0.62rem;
+            margin: 0.16rem 0;
+            font-weight: 600;
+            font-size: 0.99rem;
+            background: transparent;
+          }
+
+          .sidebar-item.muted {
+            color: #d6dfec;
+            opacity: 0.86;
+          }
+
+          [data-testid="stSidebar"] .stRadio > label {
+            display: none;
+          }
+
+          [data-testid="stSidebar"] .stRadio > div {
+            gap: 0.34rem;
+          }
+
+          [data-testid="stSidebar"] .stRadio label {
+            border-radius: 10px;
+            padding: 0.34rem 0.46rem;
+            margin: 0;
+            border: 1px solid transparent;
+            background: transparent;
+          }
+
+          [data-testid="stSidebar"] .stRadio label:hover {
+            background: rgba(255, 255, 255, 0.06);
+          }
+
+          [data-testid="stSidebar"] .stRadio label:has(input:checked) {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.09);
+          }
+
+          [data-testid="stSidebar"] .stRadio p {
+            color: #e8eef8;
+            margin: 0;
+            font-weight: 700;
+            font-size: 1.02rem;
+            letter-spacing: -0.01em;
           }
 
           h1, h2, h3 {
-            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
-            letter-spacing: -0.025em;
-            color: var(--text-main);
+            font-family: "DM Sans", "Nunito", sans-serif;
+            letter-spacing: -0.02em;
+            color: #2a4266;
             font-weight: 700;
           }
 
           h1 {
-            font-size: 1.62rem;
+            font-size: 1.5rem;
             margin-bottom: 0.15rem;
           }
 
           .hero {
-            padding: 1rem 1.1rem 1.05rem 1.1rem;
-            border: 1px solid var(--line-soft);
-            border-radius: 16px;
-            background: var(--card-bg);
-            box-shadow: var(--shadow-card);
-            margin: 0.15rem 0 1rem 0;
-            position: relative;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+            background: #f8fafd;
+            margin: 0.25rem 0 0.85rem 0;
             overflow: hidden;
           }
 
-          .hero::before {
-            content: '';
-            position: absolute;
-            right: -56px;
-            top: -56px;
-            width: 180px;
-            height: 180px;
-            border-radius: 50%;
-            background: radial-gradient(circle at center, var(--accent-soft), transparent 70%);
+          .hero-head {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.64rem 0.95rem 0.58rem 0.95rem;
+            background: #f5f7fb;
+            border-bottom: 1px solid var(--card-border);
           }
 
-          .hero-eyebrow {
-            margin: 0 0 0.34rem 0;
-            font-size: 0.68rem;
-            letter-spacing: 0.11em;
-            text-transform: uppercase;
-            font-weight: 700;
-            color: #5b6472;
+          .hero-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 6px;
+            background:
+              radial-gradient(circle at 30% 30%, #335f96 0 24%, transparent 25%),
+              radial-gradient(circle at 70% 30%, #335f96 0 24%, transparent 25%),
+              radial-gradient(circle at 30% 70%, #335f96 0 24%, transparent 25%),
+              radial-gradient(circle at 70% 70%, #335f96 0 24%, transparent 25%);
           }
 
           .hero-title {
             margin: 0;
-            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
-            font-size: 1.22rem;
-            letter-spacing: -0.026em;
-            font-weight: 800;
-            color: var(--text-main);
+            color: #32527f;
+            font-family: "DM Sans", "Nunito", sans-serif;
+            font-size: 1.04rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
           }
 
           .hero-subtitle {
-            margin: 0.35rem 0 0 0;
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            line-height: 1.45;
-            max-width: 820px;
+            margin: 0;
+            padding: 0.54rem 0.95rem 0.58rem 0.95rem;
+            color: #7b8899;
+            font-size: 0.83rem;
+            font-weight: 600;
           }
 
           [data-testid="stMetric"] {
-            border: 1px solid var(--line-soft);
-            border-radius: 14px;
-            padding: 0.58rem 0.72rem 0.52rem 0.72rem;
-            background: #ffffff;
-            box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04);
-            transition: transform .16s ease, box-shadow .16s ease;
-          }
-
-          [data-testid="stMetric"]:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            background: var(--card-bg);
+            box-shadow: 0 1px 1px rgba(31, 45, 71, 0.04);
+            padding: 0.56rem 0.7rem;
           }
 
           [data-testid="stMetricLabel"] {
-            color: #64748b;
-            font-weight: 600;
-            letter-spacing: 0.015em;
+            color: #7a8798;
+            font-weight: 700;
+            font-size: 0.78rem;
+            letter-spacing: 0.01em;
           }
 
           [data-testid="stMetricValue"] {
-            color: #0b1220;
-            font-family: "JetBrains Mono", ui-monospace, monospace;
-            font-size: 1.27rem;
-            font-variant-numeric: tabular-nums;
+            color: #1f334f;
+            font-family: "DM Sans", "Nunito", sans-serif;
+            font-size: 1.66rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
           }
 
           [data-testid="stDataFrame"],
           [data-testid="stTable"],
           [data-testid="stForm"],
           [data-testid="stAlert"] {
-            border: 1px solid var(--line-soft);
-            border-radius: 14px;
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-            background: #ffffff;
+            background: #f8fafd;
+            box-shadow: 0 1px 2px rgba(19, 35, 58, 0.05);
           }
 
           [data-testid="stForm"] {
-            padding: 0.8rem 0.85rem 0.6rem 0.85rem;
-            box-shadow: var(--shadow-card);
+            background: #f7f9fc;
+            padding: 0.76rem 0.84rem 0.62rem 0.84rem;
           }
 
           [data-testid="stAlert"] {
@@ -221,10 +313,10 @@ def inject_custom_css() -> None:
           .stNumberInput > div > div > input,
           .stMultiSelect > div > div,
           .stTextArea > div > div > textarea {
-            border-radius: 11px;
-            border: 1px solid var(--line-soft);
-            background: #ffffff;
-            font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+            border-radius: 10px;
+            border: 1px solid #cfd5df;
+            background: #fdfdff;
+            font-family: "Nunito", "Segoe UI", sans-serif;
           }
 
           [data-baseweb="select"] > div:focus-within,
@@ -232,61 +324,61 @@ def inject_custom_css() -> None:
           .stDateInput > div > div input:focus,
           .stNumberInput > div > div > input:focus,
           .stTextArea > div > div > textarea:focus {
-            border-color: rgba(15, 98, 254, 0.45);
-            box-shadow: 0 0 0 3px rgba(15, 98, 254, 0.14);
-          }
-
-          .stTabs [role="tablist"] {
-            gap: 0.35rem;
-          }
-
-          .stTabs [role="tab"] {
-            border-radius: 999px;
-            border: 1px solid var(--line-soft);
-            background: rgba(255, 255, 255, 0.72);
-            font-weight: 600;
-            color: #4b5563;
-            padding: 0.35rem 0.85rem;
-          }
-
-          .stTabs [role="tab"][aria-selected="true"] {
-            background: #111827;
-            border-color: #111827;
-            color: #f8fafc;
+            border-color: rgba(49, 89, 143, 0.52);
+            box-shadow: 0 0 0 3px rgba(49, 89, 143, 0.13);
           }
 
           .stButton > button,
           div[data-testid="stFormSubmitButton"] button {
-            background: #111827;
-            color: white;
-            border: 1px solid #0b1220;
-            border-radius: 11px;
-            font-weight: 600;
-            transition: transform .14s ease, box-shadow .14s ease, background .14s ease;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.18);
+            background: #335786;
+            color: #f4f8ff;
+            border: 1px solid #2d4f7b;
+            border-radius: 10px;
+            font-weight: 700;
+            box-shadow: 0 8px 14px rgba(40, 66, 101, 0.18);
           }
 
           .stButton > button:hover,
           div[data-testid="stFormSubmitButton"] button:hover {
-            background: #0b1220;
-            transform: translateY(-1px);
-            box-shadow: 0 14px 24px rgba(15, 23, 42, 0.25);
+            background: #294a74;
+            border-color: #27466d;
+          }
+
+          .stTabs [role="tablist"] {
+            gap: 0.3rem;
+          }
+
+          .stTabs [role="tab"] {
+            border-radius: 9px;
+            border: 1px solid #cfd5df;
+            background: #f6f8fb;
+            color: #506079;
+            font-weight: 700;
+            padding: 0.34rem 0.8rem;
+          }
+
+          .stTabs [role="tab"][aria-selected="true"] {
+            background: #395a86;
+            border-color: #395a86;
+            color: #f3f8ff;
           }
 
           .stProgress > div > div > div > div {
-            background: var(--accent);
+            background: #3f6ea9;
           }
 
-          @keyframes fadeSlideIn {
-            from { opacity: 0; transform: translateY(4px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-
-          .hero,
-          [data-testid="stMetric"],
-          [data-testid="stDataFrame"],
-          [data-testid="stForm"] {
-            animation: fadeSlideIn .32s ease-out both;
+          @media (max-width: 960px) {
+            main .block-container {
+              margin-top: 0.3rem;
+              border-radius: 14px;
+              padding-top: 1.2rem;
+            }
+            main .block-container::before {
+              height: 9px;
+            }
+            [data-testid="stSidebar"] .block-container {
+              padding-top: 0.8rem;
+            }
           }
         </style>
         """,
@@ -297,34 +389,34 @@ def inject_custom_css() -> None:
 def style_figure(fig, title: str | None = None):
     fig.update_layout(
         template="plotly_white",
-        font={"family": "Plus Jakarta Sans, Segoe UI, sans-serif", "size": 12, "color": "#0b1220"},
+        font={"family": "Nunito, Segoe UI, sans-serif", "size": 12, "color": "#273852"},
         colorway=CHART_COLORS,
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#ffffff",
+        plot_bgcolor="#f9fafc",
         hovermode="x unified",
-        margin={"l": 20, "r": 14, "t": 60, "b": 22},
+        margin={"l": 18, "r": 12, "t": 56, "b": 20},
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
         hoverlabel={
-            "bgcolor": "#111827",
-            "font": {"color": "#f8fafc", "family": "Plus Jakarta Sans, Segoe UI, sans-serif", "size": 12},
+            "bgcolor": "#314f78",
+            "font": {"color": "#f1f7ff", "family": "Nunito, Segoe UI, sans-serif", "size": 12},
         },
     )
     if title:
-        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 17}})
+        fig.update_layout(title={"text": title, "x": 0.01, "font": {"size": 16}})
     fig.update_xaxes(
         showgrid=False,
         zeroline=False,
         showline=True,
-        linecolor="rgba(15, 23, 42, 0.18)",
+        linecolor="rgba(62, 82, 111, 0.28)",
         ticks="outside",
-        tickcolor="rgba(15, 23, 42, 0.24)",
+        tickcolor="rgba(62, 82, 111, 0.22)",
     )
     fig.update_yaxes(
         showgrid=True,
-        gridcolor="rgba(15, 23, 42, 0.08)",
+        gridcolor="rgba(74, 95, 127, 0.14)",
         zeroline=False,
         showline=True,
-        linecolor="rgba(15, 23, 42, 0.10)",
+        linecolor="rgba(62, 82, 111, 0.12)",
     )
     return fig
 
@@ -1380,24 +1472,59 @@ def run_grid_search(
 # UI
 # -----------------------------
 inject_custom_css()
-st.title("Ticker DB Dashboard")
+st.title("Overview")
 st.markdown(
     """
     <div class="hero">
-      <p class="hero-eyebrow">Portfolio Intelligence</p>
-      <p class="hero-title">ETF Structure + Signal Console</p>
+      <div class="hero-head">
+        <span class="hero-icon"></span>
+        <p class="hero-title">Overview</p>
+      </div>
       <p class="hero-subtitle">
-        Analyze sector structure, intraday leadership, and strategy simulations in one streamlined interface.
+        Sector intelligence, intraday leadership, and strategy simulation in one operational dashboard.
       </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
-page = st.sidebar.radio(
-    "Page",
-    ["Explorer", "Top Performers", "Intraday Performers", "Strategy Simulator"],
-    index=0,
-)
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+          <span class="sidebar-badge">✓</span>
+          <span class="sidebar-brand-text">Shield</span>
+        </div>
+        <p class="sidebar-section">Main Menu</p>
+        """,
+        unsafe_allow_html=True,
+    )
+    nav_choice = st.radio(
+        "Navigation",
+        ["Overview", "Top Performers", "Intraday Movers", "Strategy Simulator"],
+        index=0,
+        key="sidebar_nav",
+        label_visibility="collapsed",
+    )
+    st.markdown(
+        """
+        <p class="sidebar-section">Other Menu</p>
+        <div class="sidebar-item muted">Schedules</div>
+        <div class="sidebar-item muted">Payment</div>
+        <div class="sidebar-item muted">Product & Stock</div>
+        <p class="sidebar-section">Help & Settings</p>
+        <div class="sidebar-item muted">Help Center</div>
+        <div class="sidebar-item muted">Settings</div>
+        <div class="sidebar-item muted">Report</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+page = {
+    "Overview": "Explorer",
+    "Top Performers": "Top Performers",
+    "Intraday Movers": "Intraday Performers",
+    "Strategy Simulator": "Strategy Simulator",
+}[nav_choice]
 
 if page == "Explorer":
     _, _, tickers = render_classification_filters("explorer")
