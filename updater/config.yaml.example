@@ -26,6 +26,10 @@ update:
   # Lock timeout for TRUNCATE prices_1m when intraday_truncate_before_load=true.
   intraday_truncate_lock_timeout_s: 15
   intraday_period: "1d"
+  # If true, derives provisional same-day 1d OHLCV from 1m bars when provider 1d lags.
+  promote_intraday_to_1d: true
+  # Trading calendar timezone used when aggregating 1m -> provisional 1d rows.
+  market_timezone: "America/New_York"
   keep_1m_hours: 30
   # Session-level DB safety timeouts for DML during updates.
   db_lock_timeout_s: 15

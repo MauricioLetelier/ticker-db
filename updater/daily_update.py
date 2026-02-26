@@ -3,6 +3,7 @@ import logging
 import sys
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic, sleep
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 import psycopg
@@ -338,6 +339,54 @@ def truncate_1m(conn: psycopg.Connection, lock_timeout_s: int = 15) -> None:
         cur.execute("TRUNCATE TABLE prices_1m;")
 
 
+def build_daily_from_intraday(df1m: pd.DataFrame, market_tz: str) -> pd.DataFrame:
+    if df1m is None or df1m.empty:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Adj Close", "Volume"])
+
+    df = df1m.copy()
+    idx = pd.to_datetime(df.index)
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    else:
+        idx = idx.tz_convert("UTC")
+
+    try:
+        tz = ZoneInfo(market_tz)
+        local_idx = idx.tz_convert(tz)
+    except ZoneInfoNotFoundError:
+        LOGGER.warning("invalid market_timezone=%s; falling back to UTC", market_tz)
+        local_idx = idx
+
+    df.index = local_idx
+    df["market_dt"] = df.index.date
+
+    grouped = df.groupby("market_dt", sort=True)
+    out = pd.DataFrame({
+        "Open": grouped["Open"].first(),
+        "High": grouped["High"].max(),
+        "Low": grouped["Low"].min(),
+        "Close": grouped["Close"].last(),
+        "Adj Close": grouped["Close"].last(),
+        "Volume": grouped["Volume"].sum(min_count=1),
+    })
+    out.index = pd.to_datetime(out.index)
+    return out
+
+
+def select_provisional_rows(df1d: pd.DataFrame, provisional_1d: pd.DataFrame) -> pd.DataFrame:
+    if provisional_1d is None or provisional_1d.empty:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Adj Close", "Volume"])
+
+    if df1d is None or df1d.empty:
+        return provisional_1d
+
+    official_idx = pd.to_datetime(df1d.index, errors="coerce").date
+    if len(official_idx) == 0:
+        return provisional_1d
+    max_official = max(official_idx)
+    return provisional_1d[pd.to_datetime(provisional_1d.index).date > max_official]
+
+
 def configure_logging() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
@@ -367,6 +416,8 @@ def main() -> int:
     yfinance_timeout_s = max(5, int(ucfg.get("yfinance_timeout_s", 25)))
     yfinance_retries = max(0, int(ucfg.get("yfinance_retries", 2)))
     yfinance_retry_backoff_s = max(0.5, float(ucfg.get("yfinance_retry_backoff_s", 2.0)))
+    promote_intraday_to_1d = bool(ucfg.get("promote_intraday_to_1d", True))
+    market_timezone = str(ucfg.get("market_timezone", "America/New_York"))
     daily_start_mode = str(ucfg.get("daily_start_mode", "from_db")).lower()
     daily_overlap_days = max(0, int(ucfg.get("daily_overlap_days", 3)))
     daily_bootstrap_lookback_days = max(1, int(ucfg.get("daily_bootstrap_lookback_days", lookback)))
@@ -385,12 +436,14 @@ def main() -> int:
 
     LOGGER.info(
         "run start tickers=%s daily_start_mode=%s overlap_days=%s intraday_enabled=%s intraday_period=%s "
-        "yf_timeout_s=%s yf_retries=%s",
+        "promote_intraday_to_1d=%s market_timezone=%s yf_timeout_s=%s yf_retries=%s",
         total_tickers,
         daily_start_mode,
         daily_overlap_days,
         intraday_enabled,
         intraday_period,
+        promote_intraday_to_1d,
+        market_timezone,
         yfinance_timeout_s,
         yfinance_retries,
     )
@@ -479,16 +532,18 @@ def main() -> int:
                         retry_backoff_s=yfinance_retry_backoff_s,
                     )
                     df1d = normalize_ohlcv(df1d, t)
+                    daily_rows_official = 0 if df1d is None else len(df1d)
                     LOGGER.info(
                         "[%s/%s] ticker=%s upserting 1d rows=%s",
                         idx,
                         total_tickers,
                         t,
-                        0 if df1d is None else len(df1d),
+                        daily_rows_official,
                     )
                     upsert_1d(conn, t, df1d)
 
                     intraday_rows = 0
+                    daily_rows_provisional = 0
                     if intraday_enabled:
                         LOGGER.info(
                             "[%s/%s] ticker=%s downloading 1m period=%s",
@@ -515,6 +570,20 @@ def main() -> int:
                             intraday_rows,
                         )
                         upsert_1m(conn, t, df1m)
+                        if promote_intraday_to_1d:
+                            provisional_1d = build_daily_from_intraday(df1m, market_timezone)
+                            provisional_rows = select_provisional_rows(df1d, provisional_1d)
+                            daily_rows_provisional = 0 if provisional_rows is None else len(provisional_rows)
+                            if daily_rows_provisional > 0:
+                                LOGGER.info(
+                                    "[%s/%s] ticker=%s upserting provisional 1d rows from 1m rows=%s tz=%s",
+                                    idx,
+                                    total_tickers,
+                                    t,
+                                    daily_rows_provisional,
+                                    market_timezone,
+                                )
+                                upsert_1d(conn, t, provisional_rows)
 
                     LOGGER.info("[%s/%s] ticker=%s committing transaction", idx, total_tickers, t)
                     conn.commit()
@@ -524,14 +593,15 @@ def main() -> int:
                     avg_per_ticker = run_elapsed / idx if idx > 0 else 0.0
                     eta_seconds = avg_per_ticker * (total_tickers - idx)
                     LOGGER.info(
-                        "[%s/%s %.1f%%] ticker=%s done daily_start=%s daily_rows=%s intraday_rows=%s "
+                        "[%s/%s %.1f%%] ticker=%s done daily_start=%s daily_rows_official=%s daily_rows_provisional=%s intraday_rows=%s "
                         "ticker_elapsed=%.1fs run_elapsed=%.1fs eta=%.1fs",
                         idx,
                         total_tickers,
                         pct,
                         t,
                         start_dt,
-                        0 if df1d is None else len(df1d),
+                        daily_rows_official,
+                        daily_rows_provisional,
                         intraday_rows,
                         ticker_elapsed,
                         run_elapsed,
